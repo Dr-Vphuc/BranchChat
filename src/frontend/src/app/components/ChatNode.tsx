@@ -9,8 +9,8 @@ interface ChatNodeProps {
   branchDepth: number
   isActive: boolean
   isOnActivePath: boolean
-  /** Transient typing state (not part of the node) — undefined when not streaming. */
-  streaming?: { progress: number; isTyping: boolean }
+  /** Transient streaming state (not part of the node) — undefined when idle. */
+  streaming?: { isTyping: boolean; error?: string }
   onActivate: (id: string) => void
   onBranch: (parentId: string) => void
   onContinue: (parentId: string) => void
@@ -32,11 +32,10 @@ export function ChatNode({
   const question = nodeQuestion(node)
   const answer = nodeAnswer(node)
   const isTyping = streaming?.isTyping ?? false
-  const progress = streaming?.progress ?? 0
+  const error = streaming?.error
 
-  const visibleAnswer = isTyping
-    ? answer.slice(0, Math.floor(answer.length * progress))
-    : answer
+  // Content streams in live, so the message itself is the visible answer.
+  const visibleAnswer = answer
 
   const depthLabel =
     branchDepth === 0
@@ -172,7 +171,8 @@ export function ChatNode({
               whiteSpace: 'pre-wrap',
             }}
           >
-            {visibleAnswer || (
+            {visibleAnswer}
+            {!visibleAnswer && !error && (
               <span style={{ color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>
                 Waiting for response...
               </span>
@@ -189,6 +189,18 @@ export function ChatNode({
                   animation: 'bc-cursor-blink 0.75s steps(1) infinite',
                 }}
               />
+            )}
+            {error && (
+              <span
+                style={{
+                  display: 'block',
+                  marginTop: visibleAnswer ? 8 : 0,
+                  color: '#f87171',
+                  fontStyle: 'italic',
+                }}
+              >
+                ⚠ {error}
+              </span>
             )}
           </p>
         </div>

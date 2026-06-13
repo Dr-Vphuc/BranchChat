@@ -6,8 +6,9 @@ import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
 import { ConversationNode, Conversation, EdgeKind, PendingInput } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, BRANCH_GAP_X, MAIN_GAP_Y, BRANCH_SPACING_Y } from './lib/constants'
-import { getPathToRoot, getChainToRoot, generateAnswer, buildDepthMap, nodeQuestion } from './lib/utils'
+import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
 import { loadState, saveState, clearState } from './lib/storage'
+import { streamChat, DEFAULT_MODEL } from './lib/api'
 
 const ACCENT_MAIN_COLOR = '#f59e0b'
 
@@ -23,8 +24,8 @@ export default function App() {
   const [creatingRoot, setCreatingRoot] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
-  // Transient typing animation state, keyed by node id — never persisted.
-  const [streaming, setStreaming] = useState<Record<string, { progress: number; isTyping: boolean }>>({})
+  // Transient streaming state, keyed by node id — never persisted.
+  const [streaming, setStreaming] = useState<Record<string, { isTyping: boolean; error?: string }>>({})
 
   const containerRef = useRef<HTMLDivElement>(null)
   const dragState = useRef({ startX: 0, startY: 0, startOX: 0, startOY: 0, moved: false })
@@ -185,7 +186,8 @@ export default function App() {
     })
   }, [viewportSize])
 
-  // Build a one-exchange node (user question + mock assistant answer).
+  // Build a one-exchange node: the user question + an empty assistant message
+  // that the LLM stream fills in.
   const buildExchangeNode = useCallback((
     id: string,
     parentId: string | null,
@@ -194,7 +196,6 @@ export default function App() {
     question: string,
   ): ConversationNode => {
     const now = Date.now()
-    const answer = generateAnswer(question)
     return {
       id,
       parentId,
@@ -202,24 +203,41 @@ export default function App() {
       position,
       messages: [
         { id: `${id}-u`, role: 'user', content: question, createdAt: now },
-        { id: `${id}-a`, role: 'assistant', content: answer, model: 'claude-opus-4-8', createdAt: now + 1 },
+        { id: `${id}-a`, role: 'assistant', content: '', model: DEFAULT_MODEL, createdAt: now + 1 },
       ],
     }
   }, [])
 
-  // Animate the assistant answer typing in — transient, kept out of the node model.
-  const startTypingAnimation = useCallback((nodeId: string) => {
-    setStreaming(prev => ({ ...prev, [nodeId]: { progress: 0, isTyping: true } }))
-    const duration = 2200
-    const startTime = performance.now()
-    const animate = (now: number) => {
-      const progress = Math.min((now - startTime) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 2)
-      setStreaming(prev => ({ ...prev, [nodeId]: { progress: eased, isTyping: progress < 1 } }))
-      if (progress < 1) requestAnimationFrame(animate)
+  // Stream the assistant answer for a node, appending tokens to its message as
+  // they arrive. `context` is the root→node chain (empty messages stripped).
+  const runLLM = useCallback(async (nodeId: string, context: { role: 'user' | 'assistant' | 'system'; content: string }[]) => {
+    setStreaming(prev => ({ ...prev, [nodeId]: { isTyping: true } }))
+    try {
+      for await (const delta of streamChat(context)) {
+        setNodes(prev => prev.map(n =>
+          n.id === nodeId
+            ? {
+                ...n,
+                messages: n.messages.map(m =>
+                  m.role === 'assistant' ? { ...m, content: m.content + delta } : m
+                ),
+              }
+            : n
+        ))
+      }
+      setStreaming(prev => ({ ...prev, [nodeId]: { isTyping: false } }))
+    } catch (e) {
+      setStreaming(prev => ({ ...prev, [nodeId]: { isTyping: false, error: e instanceof Error ? e.message : String(e) } }))
     }
-    requestAnimationFrame(animate)
   }, [])
+
+  // Assemble the LLM context for a freshly-created node from a node list,
+  // dropping the empty assistant placeholder just added.
+  const buildContext = useCallback((nodeId: string, nodeList: ConversationNode[]) =>
+    assembleContext(nodeId, nodeList)
+      .filter(m => m.content.trim().length > 0)
+      .map(m => ({ role: m.role, content: m.content })),
+  [])
 
   // Create the first node of an empty canvas (no parent).
   const handleCreateRoot = useCallback((question: string) => {
@@ -229,9 +247,9 @@ export default function App() {
     setNodes([newNode])
     setActiveNodeId(newId)
     setCreatingRoot(false)
-    startTypingAnimation(newId)
+    runLLM(newId, buildContext(newId, [newNode]))
     setTimeout(() => centerOnWorld(position.x, position.y), 80)
-  }, [buildExchangeNode, startTypingAnimation, centerOnWorld])
+  }, [buildExchangeNode, runLLM, buildContext, centerOnWorld])
 
   // Wipe everything back to a blank canvas.
   const handleClear = useCallback(() => {
@@ -432,7 +450,7 @@ export default function App() {
     setActiveNodeId(newId)
     setPendingInput(null)
 
-    startTypingAnimation(newId)
+    runLLM(newId, buildContext(newId, [...nodes, newNode]))
 
     // Pan to new node
     setTimeout(() => {
@@ -447,7 +465,7 @@ export default function App() {
         })
       }
     }, 80)
-  }, [pendingInput, nodes, viewportSize, buildExchangeNode, startTypingAnimation])
+  }, [pendingInput, nodes, viewportSize, buildExchangeNode, runLLM, buildContext])
 
   // Auto-save the session (debounced) whenever the tree or view changes.
   useEffect(() => {
