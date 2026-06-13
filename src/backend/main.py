@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from google import genai
@@ -89,3 +90,11 @@ def chat(req: ChatRequest) -> StreamingResponse:
             yield _sse({"error": str(exc)})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# Production: serve the built frontend if it was bundled into the image. Mounted
+# last so the /api/* routes above take precedence. In dev STATIC_DIR is unset and
+# Vite serves the frontend instead.
+_static_dir = os.environ.get("STATIC_DIR")
+if _static_dir and Path(_static_dir).is_dir():
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")
