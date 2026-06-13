@@ -1,22 +1,26 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, GitBranch, ChevronRight } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, GitBranch, ChevronRight, Trash2, MessageSquarePlus } from 'lucide-react'
 import { ChatNode } from './components/ChatNode'
 import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
-import { ConversationNode, Message, PendingInput } from './lib/types'
+import { ConversationNode, Conversation, EdgeKind, PendingInput } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, BRANCH_GAP_X, MAIN_GAP_Y, BRANCH_SPACING_Y } from './lib/constants'
 import { getPathToRoot, getChainToRoot, generateAnswer, buildDepthMap, nodeQuestion } from './lib/utils'
-import { INITIAL_CONVERSATION } from './lib/initialNodes'
+import { loadState, saveState, clearState } from './lib/storage'
 
 const ACCENT_MAIN_COLOR = '#f59e0b'
 
 export default function App() {
-  const [nodes, setNodes] = useState<ConversationNode[]>(INITIAL_CONVERSATION.nodes)
-  const [offset, setOffset] = useState({ x: 60, y: 60 })
-  const [scale, setScale] = useState(0.85)
-  const [activeNodeId, setActiveNodeId] = useState<string>(INITIAL_CONVERSATION.rootId)
+  // Read any persisted session once. Empty/absent → blank start.
+  const [loaded] = useState(() => loadState())
+
+  const [nodes, setNodes] = useState<ConversationNode[]>(() => loaded?.conversation.nodes ?? [])
+  const [offset, setOffset] = useState(() => loaded?.viewport.offset ?? { x: 60, y: 60 })
+  const [scale, setScale] = useState(() => loaded?.viewport.scale ?? 0.85)
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(() => loaded?.activeNodeId ?? null)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
+  const [creatingRoot, setCreatingRoot] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
   // Transient typing animation state, keyed by node id — never persisted.
@@ -28,9 +32,14 @@ export default function App() {
   currentScale.current = scale
   const currentOffset = useRef(offset)
   currentOffset.current = offset
+  // Stable conversation identity (id + createdAt) for persistence.
+  const convMeta = useRef({
+    id: loaded?.conversation.id ?? crypto.randomUUID(),
+    createdAt: loaded?.conversation.createdAt ?? Date.now(),
+  })
 
-  const activePath = getPathToRoot(activeNodeId, nodes)
-  const breadcrumbChain = getChainToRoot(activeNodeId, nodes)
+  const activePath = getPathToRoot(activeNodeId ?? '', nodes)
+  const breadcrumbChain = getChainToRoot(activeNodeId ?? '', nodes)
   const depthMap = buildDepthMap(nodes)
 
   // Sync viewport size
@@ -169,6 +178,74 @@ export default function App() {
     })
   }, [nodes, viewportSize])
 
+  const centerOnWorld = useCallback((x: number, y: number) => {
+    setOffset({
+      x: viewportSize.width / 2 - (x + NODE_WIDTH / 2) * currentScale.current,
+      y: viewportSize.height / 3 - (y + NODE_HEIGHT / 3) * currentScale.current,
+    })
+  }, [viewportSize])
+
+  // Build a one-exchange node (user question + mock assistant answer).
+  const buildExchangeNode = useCallback((
+    id: string,
+    parentId: string | null,
+    edgeKind: EdgeKind,
+    position: { x: number; y: number },
+    question: string,
+  ): ConversationNode => {
+    const now = Date.now()
+    const answer = generateAnswer(question)
+    return {
+      id,
+      parentId,
+      edgeKind,
+      position,
+      messages: [
+        { id: `${id}-u`, role: 'user', content: question, createdAt: now },
+        { id: `${id}-a`, role: 'assistant', content: answer, model: 'claude-opus-4-8', createdAt: now + 1 },
+      ],
+    }
+  }, [])
+
+  // Animate the assistant answer typing in — transient, kept out of the node model.
+  const startTypingAnimation = useCallback((nodeId: string) => {
+    setStreaming(prev => ({ ...prev, [nodeId]: { progress: 0, isTyping: true } }))
+    const duration = 2200
+    const startTime = performance.now()
+    const animate = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 2)
+      setStreaming(prev => ({ ...prev, [nodeId]: { progress: eased, isTyping: progress < 1 } }))
+      if (progress < 1) requestAnimationFrame(animate)
+    }
+    requestAnimationFrame(animate)
+  }, [])
+
+  // Create the first node of an empty canvas (no parent).
+  const handleCreateRoot = useCallback((question: string) => {
+    const newId = crypto.randomUUID()
+    const position = { x: 120, y: 120 }
+    const newNode = buildExchangeNode(newId, null, 'continue', position, question)
+    setNodes([newNode])
+    setActiveNodeId(newId)
+    setCreatingRoot(false)
+    startTypingAnimation(newId)
+    setTimeout(() => centerOnWorld(position.x, position.y), 80)
+  }, [buildExchangeNode, startTypingAnimation, centerOnWorld])
+
+  // Wipe everything back to a blank canvas.
+  const handleClear = useCallback(() => {
+    clearState()
+    setNodes([])
+    setActiveNodeId(null)
+    setStreaming({})
+    setPendingInput(null)
+    setCreatingRoot(false)
+    setOffset({ x: 60, y: 60 })
+    setScale(0.85)
+    convMeta.current = { id: crypto.randomUUID(), createdAt: Date.now() }
+  }, [])
+
   // Branch creation
   const handleSubmit = useCallback((question: string) => {
     if (!pendingInput) return
@@ -219,21 +296,7 @@ export default function App() {
     }
 
     const newId = crypto.randomUUID()
-    const now = Date.now()
-    const fullAnswer = generateAnswer(question)
-
-    const messages: Message[] = [
-      { id: `${newId}-u`, role: 'user', content: question, createdAt: now },
-      { id: `${newId}-a`, role: 'assistant', content: fullAnswer, model: 'claude-opus-4-8', createdAt: now + 1 },
-    ]
-
-    const newNode: ConversationNode = {
-      id: newId,
-      parentId: pendingInput.parentId,
-      edgeKind: pendingInput.mode,
-      messages,
-      position: { x: newX, y: newY },
-    }
+    const newNode = buildExchangeNode(newId, pendingInput.parentId, pendingInput.mode, { x: newX, y: newY }, question)
 
     setNodes(prev => {
       const updated = [...prev, newNode]
@@ -369,17 +432,7 @@ export default function App() {
     setActiveNodeId(newId)
     setPendingInput(null)
 
-    // Typing animation — transient state, kept out of the node model
-    setStreaming(prev => ({ ...prev, [newId]: { progress: 0, isTyping: true } }))
-    const duration = 2200
-    const startTime = performance.now()
-    const animate = (now: number) => {
-      const progress = Math.min((now - startTime) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 2)
-      setStreaming(prev => ({ ...prev, [newId]: { progress: eased, isTyping: progress < 1 } }))
-      if (progress < 1) requestAnimationFrame(animate)
-    }
-    requestAnimationFrame(animate)
+    startTypingAnimation(newId)
 
     // Pan to new node
     setTimeout(() => {
@@ -394,7 +447,26 @@ export default function App() {
         })
       }
     }, 80)
-  }, [pendingInput, nodes, viewportSize])
+  }, [pendingInput, nodes, viewportSize, buildExchangeNode, startTypingAnimation])
+
+  // Auto-save the session (debounced) whenever the tree or view changes.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const root = nodes.find(n => n.parentId === null)
+      const rootQ = root ? nodeQuestion(root) : ''
+      const title = rootQ ? (rootQ.length > 40 ? rootQ.slice(0, 40) + '…' : rootQ) : 'Untitled'
+      const conversation: Conversation = {
+        id: convMeta.current.id,
+        title,
+        rootId: root?.id ?? '',
+        nodes,
+        createdAt: convMeta.current.createdAt,
+        updatedAt: Date.now(),
+      }
+      saveState({ version: 1, conversation, viewport: { offset, scale }, activeNodeId })
+    }, 400)
+    return () => window.clearTimeout(handle)
+  }, [nodes, offset, scale, activeNodeId])
 
   // Dot grid background follows pan/zoom
   const dotSpacing = 28 * scale
@@ -466,6 +538,66 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {/* Empty state — blank canvas needs a way to create the first node */}
+      {nodes.length === 0 && !creatingRoot && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 16,
+            pointerEvents: 'none',
+            zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 14,
+              pointerEvents: 'auto',
+            }}
+          >
+            <MessageSquarePlus size={34} color="rgba(245,158,11,0.45)" strokeWidth={1.5} />
+            <div
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 13.5,
+                color: 'rgba(255,255,255,0.4)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              No conversation yet
+            </div>
+            <button
+              onClick={() => setCreatingRoot(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                backgroundColor: '#f59e0b',
+                border: 'none',
+                borderRadius: 5,
+                padding: '8px 16px',
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 12.5,
+                fontWeight: 500,
+                color: '#0c0c10',
+                cursor: 'pointer',
+                letterSpacing: '0.01em',
+              }}
+            >
+              <MessageSquarePlus size={13} strokeWidth={2} />
+              Start a conversation
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top bar */}
       <div
@@ -576,6 +708,40 @@ export default function App() {
         >
           {nodes.length} node{nodes.length !== 1 ? 's' : ''}
         </div>
+
+        {/* Clear / start over */}
+        {nodes.length > 0 && (
+          <button
+            onClick={handleClear}
+            title="Clear canvas"
+            style={{
+              pointerEvents: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              background: 'none',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 4,
+              padding: '3px 8px',
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 10.5,
+              color: 'rgba(255,255,255,0.4)',
+              cursor: 'pointer',
+              transition: 'all 0.12s ease',
+            }}
+            onMouseEnter={e => {
+              ;(e.currentTarget as HTMLButtonElement).style.color = '#f87171'
+              ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(248,113,113,0.4)'
+            }}
+            onMouseLeave={e => {
+              ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.4)'
+              ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.08)'
+            }}
+          >
+            <Trash2 size={11} strokeWidth={2} />
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Zoom controls */}
@@ -651,7 +817,7 @@ export default function App() {
         onNavigate={setOffset}
       />
 
-      {/* Input bar */}
+      {/* Input bar — branch/continue from an existing node */}
       {pendingInput && (() => {
         const parentNode = nodes.find(n => n.id === pendingInput.parentId)
         if (!parentNode) return null
@@ -664,6 +830,15 @@ export default function App() {
           />
         )
       })()}
+
+      {/* Input bar — create the first node */}
+      {creatingRoot && (
+        <InputBar
+          mode="root"
+          onSubmit={handleCreateRoot}
+          onCancel={() => setCreatingRoot(false)}
+        />
+      )}
     </div>
   )
 }

@@ -58,6 +58,8 @@ const NODES: ConversationNode[] = [
   ),
 ]
 
+// NOTE: No longer the default state — the app starts with a blank canvas and
+// persists to localStorage. Kept as demo content for a future "Load demo" action.
 export const INITIAL_CONVERSATION: Conversation = {
   id: 'conv-seed',
   title: 'Emergence & Consciousness',

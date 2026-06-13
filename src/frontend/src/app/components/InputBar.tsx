@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { GitBranch, ArrowDown, X, CornerDownLeft } from 'lucide-react'
+import { GitBranch, ArrowDown, X, CornerDownLeft, MessageSquarePlus } from 'lucide-react'
 import { ConversationNode, EdgeKind } from '../lib/types'
 import { nodeQuestion } from '../lib/utils'
 
 interface InputBarProps {
-  parentNode: ConversationNode
-  mode: EdgeKind
+  /** Absent when starting a new conversation (mode 'root'). */
+  parentNode?: ConversationNode
+  mode: EdgeKind | 'root'
   onSubmit: (question: string) => void
   onCancel: () => void
 }
@@ -38,7 +39,8 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
 
   const canSubmit = value.trim().length > 0
   const isBranch = mode === 'branch'
-  const parentQuestion = nodeQuestion(parentNode)
+  const isRoot = mode === 'root'
+  const parentQuestion = parentNode ? nodeQuestion(parentNode) : ''
 
   return (
     <>
@@ -83,7 +85,9 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             backgroundColor: 'rgba(0,0,0,0.2)',
           }}
         >
-          {isBranch ? (
+          {isRoot ? (
+            <MessageSquarePlus size={11} color="#f59e0b" strokeWidth={2} />
+          ) : isBranch ? (
             <GitBranch size={11} color="#f59e0b" strokeWidth={2} />
           ) : (
             <ArrowDown size={11} color="#f59e0b" strokeWidth={2} />
@@ -92,26 +96,29 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             style={{
               fontFamily: "'DM Sans', sans-serif",
               fontSize: 10.5,
-              color: 'rgba(255,255,255,0.38)',
+              color: isRoot ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.38)',
             }}
           >
-            {isBranch ? 'Branch from:' : 'Continue from:'}
+            {isRoot ? 'Start a conversation' : isBranch ? 'Branch from:' : 'Continue from:'}
           </span>
-          <span
-            style={{
-              fontFamily: "'DM Sans', sans-serif",
-              fontSize: 10.5,
-              color: 'rgba(255,255,255,0.58)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              flex: 1,
-            }}
-          >
-            {parentQuestion.length > 60
-              ? parentQuestion.slice(0, 60) + '…'
-              : parentQuestion}
-          </span>
+          {!isRoot && (
+            <span
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 10.5,
+                color: 'rgba(255,255,255,0.58)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                flex: 1,
+              }}
+            >
+              {parentQuestion.length > 60
+                ? parentQuestion.slice(0, 60) + '…'
+                : parentQuestion}
+            </span>
+          )}
+          {isRoot && <span style={{ flex: 1 }} />}
           <button
             onClick={onCancel}
             style={{
@@ -140,7 +147,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             value={value}
             onChange={e => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isBranch ? 'Ask a tangential question…' : 'Continue the thread…'}
+            placeholder={isRoot ? 'Ask anything…' : isBranch ? 'Ask a tangential question…' : 'Continue the thread…'}
             rows={3}
             style={{
               width: '100%',
@@ -197,7 +204,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             }}
           >
             <CornerDownLeft size={11} strokeWidth={2} />
-            {isBranch ? 'Branch' : 'Continue'}
+            {isRoot ? 'Start' : isBranch ? 'Branch' : 'Continue'}
           </button>
         </div>
       </div>
