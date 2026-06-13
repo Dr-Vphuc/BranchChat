@@ -1,0 +1,23 @@
+CLAUDE.md
+.venv/
+__pycache__/
+
+# Node / Vite (frontend)
+node_modules/
+dist/
+*.local
+
+# Logs
+*-debug.log*
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Env / secrets (LLM API keys sau này)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
