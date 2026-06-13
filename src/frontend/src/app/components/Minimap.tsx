@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { NodeData } from '../lib/types'
+import { ConversationNode } from '../lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, getBranchAccent } from '../lib/constants'
 
 const MM_W = 190
@@ -8,7 +8,8 @@ const MM_SCALE_X = MM_W / WORLD_WIDTH
 const MM_SCALE_Y = MM_H / WORLD_HEIGHT
 
 interface MinimapProps {
-  nodes: NodeData[]
+  nodes: ConversationNode[]
+  depthMap: Map<string, number>
   offset: { x: number; y: number }
   scale: number
   viewportSize: { width: number; height: number }
@@ -18,6 +19,7 @@ interface MinimapProps {
 
 export function Minimap({
   nodes,
+  depthMap,
   offset,
   scale,
   viewportSize,
@@ -81,11 +83,11 @@ export function Minimap({
 
       {/* Node rectangles */}
       {nodes.map(node => {
-        const nx = node.x * MM_SCALE_X
-        const ny = node.y * MM_SCALE_Y
+        const nx = node.position.x * MM_SCALE_X
+        const ny = node.position.y * MM_SCALE_Y
         const nw = Math.max(NODE_WIDTH * MM_SCALE_X, 3)
         const nh = Math.max(NODE_HEIGHT * MM_SCALE_Y, 2)
-        const accent = getBranchAccent(node.branchDepth)
+        const accent = getBranchAccent(depthMap.get(node.id) ?? 0)
         const isOnPath = activePathIds.has(node.id)
         return (
           <div

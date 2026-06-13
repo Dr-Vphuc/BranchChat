@@ -1,12 +1,16 @@
 import { useRef, useEffect } from 'react'
 import { Plus, ArrowDown } from 'lucide-react'
-import { NodeData } from '../lib/types'
-import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent, ACCENT_MAIN } from '../lib/constants'
+import { ConversationNode } from '../lib/types'
+import { nodeQuestion, nodeAnswer } from '../lib/utils'
+import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from '../lib/constants'
 
 interface ChatNodeProps {
-  node: NodeData
+  node: ConversationNode
+  branchDepth: number
   isActive: boolean
   isOnActivePath: boolean
+  /** Transient typing state (not part of the node) — undefined when not streaming. */
+  streaming?: { progress: number; isTyping: boolean }
   onActivate: (id: string) => void
   onBranch: (parentId: string) => void
   onContinue: (parentId: string) => void
@@ -14,39 +18,46 @@ interface ChatNodeProps {
 
 export function ChatNode({
   node,
+  branchDepth,
   isActive,
   isOnActivePath,
+  streaming,
   onActivate,
   onBranch,
   onContinue,
 }: ChatNodeProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const accent = getBranchAccent(node.branchDepth)
+  const accent = getBranchAccent(branchDepth)
 
-  const visibleAnswer = node.isTyping
-    ? node.answer.slice(0, Math.floor(node.answer.length * (node.typingProgress ?? 0)))
-    : node.answer
+  const question = nodeQuestion(node)
+  const answer = nodeAnswer(node)
+  const isTyping = streaming?.isTyping ?? false
+  const progress = streaming?.progress ?? 0
+
+  const visibleAnswer = isTyping
+    ? answer.slice(0, Math.floor(answer.length * progress))
+    : answer
 
   const depthLabel =
-    node.branchDepth === 0
+    branchDepth === 0
       ? 'main thread'
-      : node.branchDepth === 1
+      : branchDepth === 1
         ? 'branch'
-        : `branch · depth ${node.branchDepth}`
+        : `branch · depth ${branchDepth}`
 
   useEffect(() => {
-    if (node.isTyping && scrollRef.current) {
+    if (isTyping && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [visibleAnswer, node.isTyping])
+  }, [visibleAnswer, isTyping])
 
   return (
     <div
       data-node="true"
       style={{
         position: 'absolute',
-        left: node.x,
-        top: node.y,
+        left: node.position.x,
+        top: node.position.y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
       }}
@@ -63,7 +74,7 @@ export function ChatNode({
           overflow: 'hidden',
           cursor: 'default',
           transition: 'box-shadow 0.15s ease',
-          backgroundColor: node.branchDepth === 0 ? '#141418' : '#101015',
+          backgroundColor: branchDepth === 0 ? '#141418' : '#101015',
           borderTop: `1px solid rgba(255,255,255,${isActive ? '0.12' : '0.06'})`,
           borderRight: `1px solid rgba(255,255,255,${isActive ? '0.12' : '0.06'})`,
           borderBottom: `1px solid rgba(255,255,255,${isActive ? '0.12' : '0.06'})`,
@@ -137,7 +148,7 @@ export function ChatNode({
               lineHeight: 1.52,
             }}
           >
-            {node.question}
+            {question}
           </p>
         </div>
 
@@ -166,7 +177,7 @@ export function ChatNode({
                 Waiting for response...
               </span>
             )}
-            {node.isTyping && (
+            {isTyping && (
               <span
                 style={{
                   display: 'inline-block',

@@ -1,8 +1,9 @@
-import { NodeData } from '../lib/types'
+import { ConversationNode } from '../lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, getBranchAccent } from '../lib/constants'
 
 interface ConnectionLinesProps {
-  nodes: NodeData[]
+  nodes: ConversationNode[]
+  depthMap: Map<string, number>
   activePathIds: Set<string>
 }
 
@@ -22,13 +23,13 @@ function buildPath(
   }
 }
 
-export function ConnectionLines({ nodes, activePathIds }: ConnectionLinesProps) {
+export function ConnectionLines({ nodes, depthMap, activePathIds }: ConnectionLinesProps) {
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
 
   const connections = nodes
     .filter(n => n.parentId !== null)
     .map(n => ({ child: n, parent: nodeMap.get(n.parentId!) }))
-    .filter((c): c is { child: NodeData; parent: NodeData } => c.parent !== undefined)
+    .filter((c): c is { child: ConversationNode; parent: ConversationNode } => c.parent !== undefined)
 
   return (
     <svg
@@ -60,23 +61,23 @@ export function ConnectionLines({ nodes, activePathIds }: ConnectionLinesProps) 
       </defs>
 
       {connections.map(({ parent, child }) => {
-        const isVertical = child.x === parent.x
+        const isVertical = child.edgeKind === 'continue'
 
         let sx: number, sy: number, tx: number, ty: number
         if (isVertical) {
-          sx = parent.x + NODE_WIDTH / 2
-          sy = parent.y + NODE_HEIGHT
-          tx = child.x + NODE_WIDTH / 2
-          ty = child.y
+          sx = parent.position.x + NODE_WIDTH / 2
+          sy = parent.position.y + NODE_HEIGHT
+          tx = child.position.x + NODE_WIDTH / 2
+          ty = child.position.y
         } else {
-          sx = parent.x + NODE_WIDTH
-          sy = parent.y + NODE_HEIGHT / 2
-          tx = child.x
-          ty = child.y + NODE_HEIGHT / 2
+          sx = parent.position.x + NODE_WIDTH
+          sy = parent.position.y + NODE_HEIGHT / 2
+          tx = child.position.x
+          ty = child.position.y + NODE_HEIGHT / 2
         }
 
         const isOnPath = activePathIds.has(parent.id) && activePathIds.has(child.id)
-        const accent = getBranchAccent(child.branchDepth)
+        const accent = getBranchAccent(depthMap.get(child.id) ?? 0)
         const pathD = buildPath(sx, sy, tx, ty, isVertical)
 
         return (

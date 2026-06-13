@@ -4,21 +4,23 @@ import { ChatNode } from './components/ChatNode'
 import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
-import { NodeData, PendingInput } from './lib/types'
+import { ConversationNode, Message, PendingInput } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, BRANCH_GAP_X, MAIN_GAP_Y, BRANCH_SPACING_Y } from './lib/constants'
-import { getPathToRoot, getChainToRoot, generateAnswer } from './lib/utils'
-import { INITIAL_NODES } from './lib/initialNodes'
+import { getPathToRoot, getChainToRoot, generateAnswer, buildDepthMap, nodeQuestion } from './lib/utils'
+import { INITIAL_CONVERSATION } from './lib/initialNodes'
 
 const ACCENT_MAIN_COLOR = '#f59e0b'
 
 export default function App() {
-  const [nodes, setNodes] = useState<NodeData[]>(INITIAL_NODES)
+  const [nodes, setNodes] = useState<ConversationNode[]>(INITIAL_CONVERSATION.nodes)
   const [offset, setOffset] = useState({ x: 60, y: 60 })
   const [scale, setScale] = useState(0.85)
-  const [activeNodeId, setActiveNodeId] = useState<string>('root')
+  const [activeNodeId, setActiveNodeId] = useState<string>(INITIAL_CONVERSATION.rootId)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
+  // Transient typing animation state, keyed by node id — never persisted.
+  const [streaming, setStreaming] = useState<Record<string, { progress: number; isTyping: boolean }>>({})
 
   const containerRef = useRef<HTMLDivElement>(null)
   const dragState = useRef({ startX: 0, startY: 0, startOX: 0, startOY: 0, moved: false })
@@ -29,6 +31,7 @@ export default function App() {
 
   const activePath = getPathToRoot(activeNodeId, nodes)
   const breadcrumbChain = getChainToRoot(activeNodeId, nodes)
+  const depthMap = buildDepthMap(nodes)
 
   // Sync viewport size
   useEffect(() => {
@@ -136,8 +139,8 @@ export default function App() {
 
   const fitToScreen = useCallback(() => {
     if (nodes.length === 0) return
-    const xs = nodes.map(n => n.x)
-    const ys = nodes.map(n => n.y)
+    const xs = nodes.map(n => n.position.x)
+    const ys = nodes.map(n => n.position.y)
     const minX = Math.min(...xs)
     const minY = Math.min(...ys)
     const maxX = Math.max(...xs) + NODE_WIDTH
@@ -161,8 +164,8 @@ export default function App() {
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
     setOffset({
-      x: viewportSize.width / 2 - (node.x + NODE_WIDTH / 2) * currentScale.current,
-      y: viewportSize.height / 3 - (node.y + NODE_HEIGHT / 3) * currentScale.current,
+      x: viewportSize.width / 2 - (node.position.x + NODE_WIDTH / 2) * currentScale.current,
+      y: viewportSize.height / 3 - (node.position.y + NODE_HEIGHT / 3) * currentScale.current,
     })
   }, [nodes, viewportSize])
 
@@ -172,15 +175,15 @@ export default function App() {
     const parentNode = nodes.find(n => n.id === pendingInput.parentId)
     if (!parentNode) return
 
-    let newX: number, newY: number, isMainThread: boolean, branchDepth: number
+    let newX: number, newY: number
 
     if (pendingInput.mode === 'continue') {
       // Continue down: create child node directly below parent (same X column)
-      newX = parentNode.x
+      newX = parentNode.position.x
 
       // Find all descendants in the same column
       const sameColumnDescendants = nodes.filter(n => {
-        if (n.x !== parentNode.x) return false
+        if (n.position.x !== parentNode.position.x) return false
         // Check if this node is a descendant of parentNode
         let current = nodes.find(p => p.id === n.parentId)
         while (current) {
@@ -191,20 +194,17 @@ export default function App() {
       })
 
       const maxDescendantY = sameColumnDescendants.length > 0
-        ? Math.max(...sameColumnDescendants.map(n => n.y))
-        : parentNode.y
+        ? Math.max(...sameColumnDescendants.map(n => n.position.y))
+        : parentNode.position.y
       newY = maxDescendantY + NODE_HEIGHT + MAIN_GAP_Y
-
-      isMainThread = parentNode.isMainThread
-      branchDepth = parentNode.branchDepth
     } else {
       // Branch right: create new branch to the right of parent
-      const branchX = parentNode.x + NODE_WIDTH + BRANCH_GAP_X
+      const branchX = parentNode.position.x + NODE_WIDTH + BRANCH_GAP_X
       newX = branchX
 
       // Find all existing branches at the same level (same parentId, same X distance from parent)
       const existingBranches = nodes.filter(n =>
-        n.parentId === parentNode.id && Math.abs(n.x - branchX) < 10
+        n.parentId === parentNode.id && Math.abs(n.position.x - branchX) < 10
       )
 
       // Calculate Y position for the new branch based on total number of branches
@@ -212,35 +212,33 @@ export default function App() {
 
       // Calculate total vertical space needed
       const totalHeight = (totalBranches - 1) * (NODE_HEIGHT + BRANCH_SPACING_Y)
-      const startY = parentNode.y - totalHeight / 2
+      const startY = parentNode.position.y - totalHeight / 2
 
       // The new branch will be at the end (for now, we'll recalculate all positions)
       newY = startY + existingBranches.length * (NODE_HEIGHT + BRANCH_SPACING_Y)
-
-      isMainThread = false
-      branchDepth = parentNode.branchDepth + 1
     }
 
-    const newId = `n-${Date.now()}`
+    const newId = crypto.randomUUID()
+    const now = Date.now()
     const fullAnswer = generateAnswer(question)
 
-    const newNode: NodeData = {
+    const messages: Message[] = [
+      { id: `${newId}-u`, role: 'user', content: question, createdAt: now },
+      { id: `${newId}-a`, role: 'assistant', content: fullAnswer, model: 'claude-opus-4-8', createdAt: now + 1 },
+    ]
+
+    const newNode: ConversationNode = {
       id: newId,
       parentId: pendingInput.parentId,
-      question,
-      answer: fullAnswer,
-      x: newX,
-      y: newY,
-      isMainThread,
-      branchDepth,
-      isTyping: true,
-      typingProgress: 0,
+      edgeKind: pendingInput.mode,
+      messages,
+      position: { x: newX, y: newY },
     }
 
     setNodes(prev => {
       const updated = [...prev, newNode]
 
-      const getDescendants = (nodeId: string, nodeList: NodeData[]): Set<string> => {
+      const getDescendants = (nodeId: string, nodeList: ConversationNode[]): Set<string> => {
         const result = new Set<string>()
         const queue = [nodeId]
         while (queue.length > 0) {
@@ -258,10 +256,10 @@ export default function App() {
       if (pendingInput.mode === 'continue' && parentNode.parentId) {
         const conflictingSiblings = updated.filter(n =>
           n.parentId === parentNode.parentId &&
-          Math.abs(n.x - parentNode.x) < 10 &&
+          Math.abs(n.position.x - parentNode.position.x) < 10 &&
           n.id !== parentNode.id &&
-          n.y > parentNode.y &&
-          n.y < newY + NODE_HEIGHT + MAIN_GAP_Y
+          n.position.y > parentNode.position.y &&
+          n.position.y < newY + NODE_HEIGHT + MAIN_GAP_Y
         )
 
         if (conflictingSiblings.length > 0) {
@@ -272,27 +270,29 @@ export default function App() {
             getDescendants(sib.id, updated).forEach(id => shiftRightSet.add(id))
           })
           return updated.map(node =>
-            shiftRightSet.has(node.id) ? { ...node, x: node.x + xShift } : node
+            shiftRightSet.has(node.id)
+              ? { ...node, position: { ...node.position, x: node.position.x + xShift } }
+              : node
           )
         }
       }
 
       if (pendingInput.mode === 'branch') {
-        const branchX = parentNode.x + NODE_WIDTH + BRANCH_GAP_X
+        const branchX = parentNode.position.x + NODE_WIDTH + BRANCH_GAP_X
         const allBranches = updated.filter(n =>
-          n.parentId === parentNode.id && Math.abs(n.x - branchX) < 10
+          n.parentId === parentNode.id && Math.abs(n.position.x - branchX) < 10
         )
 
         const totalBranches = allBranches.length
         const totalHeight = (totalBranches - 1) * (NODE_HEIGHT + BRANCH_SPACING_Y)
-        const startY = parentNode.y - totalHeight / 2
+        const startY = parentNode.position.y - totalHeight / 2
 
         // Precompute branch offsets and their descendant sets
         const branchOffsets = new Map<string, number>()
         const branchDescendants = new Map<string, Set<string>>()
         allBranches.forEach((branch, index) => {
           const newBranchY = startY + index * (NODE_HEIGHT + BRANCH_SPACING_Y)
-          branchOffsets.set(branch.id, newBranchY - branch.y)
+          branchOffsets.set(branch.id, newBranchY - branch.position.y)
           branchDescendants.set(branch.id, getDescendants(branch.id, updated))
         })
 
@@ -302,24 +302,24 @@ export default function App() {
 
         // Find adjacent nodes in same column as parent
         const sameColNodes = updated.filter(n =>
-          Math.abs(n.x - parentNode.x) < 10 && n.id !== parentNode.id
+          Math.abs(n.position.x - parentNode.position.x) < 10 && n.id !== parentNode.id
         )
         const nodeAbove = sameColNodes
-          .filter(n => n.y < parentNode.y)
-          .reduce<NodeData | null>((best, n) => (!best || n.y > best.y) ? n : best, null)
+          .filter(n => n.position.y < parentNode.position.y)
+          .reduce<ConversationNode | null>((best, n) => (!best || n.position.y > best.position.y) ? n : best, null)
         const nodeBelow = sameColNodes
-          .filter(n => n.y > parentNode.y)
-          .reduce<NodeData | null>((best, n) => (!best || n.y < best.y) ? n : best, null)
+          .filter(n => n.position.y > parentNode.position.y)
+          .reduce<ConversationNode | null>((best, n) => (!best || n.position.y < best.position.y) ? n : best, null)
 
         // How much space is missing above/below the branch cluster
         let upwardShift = 0
         if (nodeAbove) {
-          const gap = topBranchY - MAIN_GAP_Y - (nodeAbove.y + NODE_HEIGHT)
+          const gap = topBranchY - MAIN_GAP_Y - (nodeAbove.position.y + NODE_HEIGHT)
           if (gap < 0) upwardShift = -gap
         }
         let downwardShift = 0
         if (nodeBelow) {
-          const gap = nodeBelow.y - (bottomBranchEdge + MAIN_GAP_Y)
+          const gap = nodeBelow.position.y - (bottomBranchEdge + MAIN_GAP_Y)
           if (gap < 0) downwardShift = -gap
         }
 
@@ -330,7 +330,7 @@ export default function App() {
         // Collect all ancestors of parentNode + their other descendants → push up
         const pushUpSet = new Set<string>()
         if (upwardShift > 0) {
-          let curr: NodeData | undefined = updated.find(n => n.id === parentNode.parentId)
+          let curr: ConversationNode | undefined = updated.find(n => n.id === parentNode.parentId)
           const visited = new Set<string>()
           while (curr && !visited.has(curr.id)) {
             visited.add(curr.id)
@@ -353,11 +353,13 @@ export default function App() {
           // Branch repositioning takes priority
           for (const [branchId, deltaY] of branchOffsets.entries()) {
             if (node.id === branchId || branchDescendants.get(branchId)?.has(node.id)) {
-              return { ...node, y: node.y + deltaY }
+              return { ...node, position: { ...node.position, y: node.position.y + deltaY } }
             }
           }
-          if (pushUpSet.has(node.id)) return { ...node, y: node.y - upwardShift }
-          if (pushDownSet.has(node.id)) return { ...node, y: node.y + downwardShift }
+          if (pushUpSet.has(node.id))
+            return { ...node, position: { ...node.position, y: node.position.y - upwardShift } }
+          if (pushDownSet.has(node.id))
+            return { ...node, position: { ...node.position, y: node.position.y + downwardShift } }
           return node
         })
       }
@@ -367,19 +369,14 @@ export default function App() {
     setActiveNodeId(newId)
     setPendingInput(null)
 
-    // Typing animation
+    // Typing animation — transient state, kept out of the node model
+    setStreaming(prev => ({ ...prev, [newId]: { progress: 0, isTyping: true } }))
     const duration = 2200
     const startTime = performance.now()
     const animate = (now: number) => {
       const progress = Math.min((now - startTime) / duration, 1)
       const eased = 1 - Math.pow(1 - progress, 2)
-      setNodes(prev =>
-        prev.map(n =>
-          n.id === newId
-            ? { ...n, typingProgress: eased, isTyping: progress < 1 }
-            : n
-        )
-      )
+      setStreaming(prev => ({ ...prev, [newId]: { progress: eased, isTyping: progress < 1 } }))
       if (progress < 1) requestAnimationFrame(animate)
     }
     requestAnimationFrame(animate)
@@ -451,15 +448,17 @@ export default function App() {
           }}
         >
           {/* SVG connector lines */}
-          <ConnectionLines nodes={nodes} activePathIds={activePath} />
+          <ConnectionLines nodes={nodes} depthMap={depthMap} activePathIds={activePath} />
 
           {/* Chat nodes */}
           {nodes.map(node => (
             <ChatNode
               key={node.id}
               node={node}
+              branchDepth={depthMap.get(node.id) ?? 0}
               isActive={activeNodeId === node.id}
               isOnActivePath={activePath.has(node.id)}
+              streaming={streaming[node.id]}
               onActivate={setActiveNodeId}
               onBranch={id => setPendingInput({ parentId: id, mode: 'branch' })}
               onContinue={id => setPendingInput({ parentId: id, mode: 'continue' })}
@@ -556,9 +555,10 @@ export default function App() {
                   panToNode(node.id)
                 }}
               >
-                {node.question.length > 28
-                  ? node.question.slice(0, 28) + '…'
-                  : node.question}
+                {(() => {
+                  const q = nodeQuestion(node)
+                  return q.length > 28 ? q.slice(0, 28) + '…' : q
+                })()}
               </span>
             </div>
           ))}
@@ -643,6 +643,7 @@ export default function App() {
       {/* Minimap */}
       <Minimap
         nodes={nodes}
+        depthMap={depthMap}
         offset={offset}
         scale={scale}
         viewportSize={viewportSize}

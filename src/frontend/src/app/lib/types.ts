@@ -1,17 +1,49 @@
-export interface NodeData {
+// ── Domain layer ────────────────────────────────────────────────────────────
+// Persisted business objects. Layout (position) lives here too because nodes are
+// freely draggable; transient UI state (typing animation) does NOT — it is held
+// separately in App state. Derived values (branchDepth, isMainThread) are computed
+// from the tree in lib/utils, never stored.
+
+/** Who produced a message. Aligned with the LLM API message format. */
+export type Role = 'user' | 'assistant' | 'system'
+
+/** Atomic unit of conversation — one utterance by one role. */
+export interface Message {
   id: string
-  parentId: string | null
-  question: string
-  answer: string
-  x: number
-  y: number
-  isMainThread: boolean
-  branchDepth: number
-  isTyping?: boolean
-  typingProgress?: number
+  role: Role
+  content: string
+  /** Model that produced an assistant message (undefined for user/system). */
+  model?: string
+  createdAt: number
 }
 
+/** How a node relates to its parent. Replaces inferring the relation from x/y. */
+export type EdgeKind = 'continue' | 'branch'
+
+/** A card / vertex in the conversation tree. */
+export interface ConversationNode {
+  id: string
+  parentId: string | null
+  /** 'continue' for the root (unused for drawing — root has no incoming edge). */
+  edgeKind: EdgeKind
+  /** Usually [user, assistant]; an array to allow tool/multi-part turns later. */
+  messages: Message[]
+  /** Stored layout — enables free drag-and-drop. */
+  position: { x: number; y: number }
+}
+
+/** The whole conversation tree. */
+export interface Conversation {
+  id: string
+  title: string
+  rootId: string
+  nodes: ConversationNode[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** Transient pointer to where a new node will be created (drives the InputBar). */
 export interface PendingInput {
   parentId: string
-  mode: 'branch' | 'continue'
+  mode: EdgeKind
 }

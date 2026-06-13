@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { GitBranch, ArrowDown, X, CornerDownLeft } from 'lucide-react'
-import { NodeData } from '../lib/types'
+import { ConversationNode, EdgeKind } from '../lib/types'
+import { nodeQuestion } from '../lib/utils'
 
 interface InputBarProps {
-  parentNode: NodeData
-  mode: 'branch' | 'continue'
+  parentNode: ConversationNode
+  mode: EdgeKind
   onSubmit: (question: string) => void
   onCancel: () => void
 }
@@ -37,6 +38,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
 
   const canSubmit = value.trim().length > 0
   const isBranch = mode === 'branch'
+  const parentQuestion = nodeQuestion(parentNode)
 
   return (
     <>
@@ -106,9 +108,9 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
               flex: 1,
             }}
           >
-            {parentNode.question.length > 60
-              ? parentNode.question.slice(0, 60) + '…'
-              : parentNode.question}
+            {parentQuestion.length > 60
+              ? parentQuestion.slice(0, 60) + '…'
+              : parentQuestion}
           </span>
           <button
             onClick={onCancel}
