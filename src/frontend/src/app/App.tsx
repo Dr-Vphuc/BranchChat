@@ -180,6 +180,14 @@ export default function App() {
 
   // Wheel zoom
   const handleWheel = useCallback((e: WheelEvent) => {
+    // Never zoom while the pointer is over a card. Over its scrollable content,
+    // let the browser scroll natively; over the rest of the card, swallow the
+    // wheel so reaching the top/bottom doesn't jump into a canvas zoom.
+    const target = e.target as Element
+    if (target.closest('[data-node]')) {
+      if (!target.closest('[data-scrollable]')) e.preventDefault()
+      return
+    }
     e.preventDefault()
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return

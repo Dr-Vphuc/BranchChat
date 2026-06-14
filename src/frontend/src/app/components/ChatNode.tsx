@@ -163,6 +163,7 @@ export function ChatNode({
         {/* Answer */}
         <div
           ref={scrollRef}
+          data-scrollable="true"
           style={{
             flex: 1,
             padding: '9px 11px 10px',
