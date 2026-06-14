@@ -87,8 +87,8 @@ export function ConnectionLines({ nodes, depthMap, activePathIds }: ConnectionLi
               d={pathD}
               fill="none"
               stroke={accent}
-              strokeWidth={1}
-              strokeOpacity={isOnPath ? 0 : 0.1}
+              strokeWidth={1.25}
+              strokeOpacity={isOnPath ? 0 : 0.32}
               strokeDasharray="5 5"
             />
             {/* Active path line */}
