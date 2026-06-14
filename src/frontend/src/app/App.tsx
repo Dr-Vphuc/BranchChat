@@ -264,6 +264,49 @@ export default function App() {
     convMeta.current = { id: crypto.randomUUID(), createdAt: Date.now() }
   }, [])
 
+  // Delete a node and its entire subtree (cascade). Confirms first when the
+  // node has descendants, since several cards disappear at once.
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    // Gather the node + all descendants via breadth-first walk of parentId links.
+    const toDelete = new Set<string>([nodeId])
+    const queue = [nodeId]
+    while (queue.length > 0) {
+      const curr = queue.shift()!
+      nodes.filter(n => n.parentId === curr).forEach(child => {
+        toDelete.add(child.id)
+        queue.push(child.id)
+      })
+    }
+
+    const descendantCount = toDelete.size - 1
+    if (descendantCount > 0) {
+      const ok = window.confirm(
+        `Delete this card and its ${descendantCount} descendant${descendantCount !== 1 ? 's' : ''}? This can't be undone.`
+      )
+      if (!ok) return
+    }
+
+    const parentId = nodes.find(n => n.id === nodeId)?.parentId ?? null
+
+    setNodes(prev => prev.filter(n => !toDelete.has(n.id)))
+    setStreaming(prev => {
+      const next = { ...prev }
+      toDelete.forEach(id => delete next[id])
+      return next
+    })
+    // If the selection fell inside the deleted subtree, move it to the surviving
+    // parent (or clear it when the root went away).
+    setActiveNodeId(curr =>
+      curr && toDelete.has(curr)
+        ? parentId && !toDelete.has(parentId) ? parentId : null
+        : curr
+    )
+    // Close any open input bar that was targeting a now-deleted node.
+    if (pendingInput && toDelete.has(pendingInput.parentId)) {
+      setPendingInput(null)
+    }
+  }, [nodes, pendingInput])
+
   // Branch creation
   const handleSubmit = useCallback((question: string) => {
     if (!pendingInput) return
@@ -552,6 +595,7 @@ export default function App() {
               onActivate={setActiveNodeId}
               onBranch={id => setPendingInput({ parentId: id, mode: 'branch' })}
               onContinue={id => setPendingInput({ parentId: id, mode: 'continue' })}
+              onDelete={handleDeleteNode}
             />
           ))}
         </div>

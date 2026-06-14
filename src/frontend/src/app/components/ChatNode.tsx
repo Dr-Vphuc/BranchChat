@@ -1,5 +1,5 @@
-import { useRef, useEffect } from 'react'
-import { Plus, ArrowDown } from 'lucide-react'
+import { useRef, useEffect, useState } from 'react'
+import { Plus, ArrowDown, X } from 'lucide-react'
 import { ConversationNode } from '../lib/types'
 import { nodeQuestion, nodeAnswer } from '../lib/utils'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from '../lib/constants'
@@ -14,6 +14,7 @@ interface ChatNodeProps {
   onActivate: (id: string) => void
   onBranch: (parentId: string) => void
   onContinue: (parentId: string) => void
+  onDelete: (id: string) => void
 }
 
 export function ChatNode({
@@ -25,8 +26,10 @@ export function ChatNode({
   onActivate,
   onBranch,
   onContinue,
+  onDelete,
 }: ChatNodeProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [hovered, setHovered] = useState(false)
   const accent = getBranchAccent(branchDepth)
 
   const question = nodeQuestion(node)
@@ -61,6 +64,8 @@ export function ChatNode({
         height: NODE_HEIGHT,
       }}
       onClick={() => onActivate(node.id)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* Card */}
       <div
@@ -205,6 +210,50 @@ export function ChatNode({
           </p>
         </div>
       </div>
+
+      {/* Delete (×) button — top-right corner, fades in on hover */}
+      <button
+        data-node="true"
+        title="Delete this card and its branches"
+        onClick={e => {
+          e.stopPropagation()
+          onDelete(node.id)
+        }}
+        style={{
+          position: 'absolute',
+          top: -10,
+          right: -10,
+          width: 22,
+          height: 22,
+          borderRadius: '50%',
+          backgroundColor: '#0c0c10',
+          borderWidth: 1.5,
+          borderStyle: 'solid',
+          borderColor: 'rgba(255,255,255,0.12)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.4)',
+          opacity: hovered ? 1 : 0,
+          pointerEvents: hovered ? 'auto' : 'none',
+          transition: 'opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease',
+          zIndex: 11,
+          padding: 0,
+        }}
+        onMouseEnter={e => {
+          ;(e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(248,113,113,0.15)'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#f87171'
+          ;(e.currentTarget as HTMLButtonElement).style.color = '#f87171'
+        }}
+        onMouseLeave={e => {
+          ;(e.currentTarget as HTMLButtonElement).style.backgroundColor = '#0c0c10'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.12)'
+          ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.4)'
+        }}
+      >
+        <X size={11} strokeWidth={2.5} />
+      </button>
 
       {/* Branch (+) button — right edge, vertically centered */}
       <button
