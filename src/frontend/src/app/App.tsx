@@ -448,29 +448,51 @@ export default function App() {
         return result
       }
 
-      // 'continue' mode: if a sibling branch below parentNode would overlap with
-      // the new child, shift that sibling (and its subtree) one column to the right
-      if (pendingInput.mode === 'continue' && parentNode.parentId) {
-        const conflictingSiblings = updated.filter(n =>
-          n.parentId === parentNode.parentId &&
+      // 'continue' mode: G (=parentNode) just grew a child straight down. Any node
+      // sharing G's column that sits below G and is NOT part of G's own subtree would
+      // be overrun by the new child — resolve per case:
+      //   • a younger branch sibling (same parent) slides one column to the right;
+      //   • a node on another thread pushes its owning node (+subtree) down to clear.
+      if (pendingInput.mode === 'continue') {
+        const gExclude = getDescendants(parentNode.id, updated) // already includes the new child
+        gExclude.add(parentNode.id)
+
+        const colliding = updated.filter(n =>
           Math.abs(n.position.x - parentNode.position.x) < 10 &&
-          n.id !== parentNode.id &&
+          !gExclude.has(n.id) &&
           n.position.y > parentNode.position.y &&
           n.position.y < newY + NODE_HEIGHT + MAIN_GAP_Y
         )
 
-        if (conflictingSiblings.length > 0) {
+        if (colliding.length > 0) {
           const xShift = NODE_WIDTH + BRANCH_GAP_X
           const shiftRightSet = new Set<string>()
-          conflictingSiblings.forEach(sib => {
-            shiftRightSet.add(sib.id)
-            getDescendants(sib.id, updated).forEach(id => shiftRightSet.add(id))
+          const pushDownSet = new Set<string>()
+          let downShift = 0
+
+          colliding.forEach(n => {
+            if (n.edgeKind === 'branch' && n.parentId === parentNode.parentId) {
+              // Younger branch sibling → relocate it (and its subtree) one column right
+              shiftRightSet.add(n.id)
+              getDescendants(n.id, updated).forEach(id => shiftRightSet.add(id))
+            } else if (n.parentId) {
+              // Cross-thread node → push its owner node (and that owner's subtree) down
+              const need = newY + NODE_HEIGHT + MAIN_GAP_Y - n.position.y
+              if (need > downShift) downShift = need
+              pushDownSet.add(n.parentId)
+              getDescendants(n.parentId, updated).forEach(id => pushDownSet.add(id))
+            }
           })
-          return updated.map(node =>
-            shiftRightSet.has(node.id)
-              ? { ...node, position: { ...node.position, x: node.position.x + xShift } }
-              : node
-          )
+
+          if (shiftRightSet.size > 0 || downShift > 0) {
+            return updated.map(node => {
+              if (shiftRightSet.has(node.id))
+                return { ...node, position: { ...node.position, x: node.position.x + xShift } }
+              if (downShift > 0 && pushDownSet.has(node.id))
+                return { ...node, position: { ...node.position, y: node.position.y + downShift } }
+              return node
+            })
+          }
         }
       }
 
@@ -492,6 +514,29 @@ export default function App() {
           branchOffsets.set(branch.id, newBranchY - branch.position.y)
           branchDescendants.set(branch.id, getDescendants(branch.id, updated))
         })
+
+        // Reverse-order Scenario 1: the sibling grew its downward thread BEFORE this
+        // branch existed, so the re-center above (which assumes 1-card-tall slots)
+        // drops the new branch onto that thread. If it overlaps a sibling's column
+        // extent, relocate the new branch (+subtree) one column right instead.
+        const off = (id: string) => branchOffsets.get(id) ?? 0
+        const newNodeY = newNode.position.y + off(newNode.id)
+        const relocateRightSet = new Set<string>()
+        for (const sib of allBranches) {
+          if (sib.id === newNode.id) continue
+          const sibSubtree = branchDescendants.get(sib.id)
+          const sibColNodes = updated.filter(u =>
+            sibSubtree?.has(u.id) && Math.abs(u.position.x - branchX) < 10
+          )
+          const sibTop = sib.position.y + off(sib.id)
+          const sibBottom = Math.max(sibTop, ...sibColNodes.map(u => u.position.y)) + NODE_HEIGHT
+          if (newNodeY < sibBottom + BRANCH_SPACING_Y &&
+              newNodeY + NODE_HEIGHT > sibTop - BRANCH_SPACING_Y) {
+            relocateRightSet.add(newNode.id)
+            branchDescendants.get(newNode.id)?.forEach(id => relocateRightSet.add(id))
+            break
+          }
+        }
 
         // Vertical extent of the entire branch cluster
         const topBranchY = startY
@@ -547,17 +592,22 @@ export default function App() {
         }
 
         return updated.map(node => {
-          // Branch repositioning takes priority
+          let next = node
+          // Branch re-centering (vertical) applies first
           for (const [branchId, deltaY] of branchOffsets.entries()) {
             if (node.id === branchId || branchDescendants.get(branchId)?.has(node.id)) {
-              return { ...node, position: { ...node.position, y: node.position.y + deltaY } }
+              next = { ...node, position: { ...node.position, y: node.position.y + deltaY } }
+              break
             }
           }
+          // The new branch may ALSO need to dodge an older sibling's thread (horizontal)
+          if (relocateRightSet.has(node.id))
+            next = { ...next, position: { ...next.position, x: next.position.x + (NODE_WIDTH + BRANCH_GAP_X) } }
           if (pushUpSet.has(node.id))
-            return { ...node, position: { ...node.position, y: node.position.y - upwardShift } }
+            next = { ...next, position: { ...next.position, y: next.position.y - upwardShift } }
           if (pushDownSet.has(node.id))
-            return { ...node, position: { ...node.position, y: node.position.y + downwardShift } }
-          return node
+            next = { ...next, position: { ...next.position, y: next.position.y + downwardShift } }
+          return next
         })
       }
 
