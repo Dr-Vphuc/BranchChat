@@ -1,5 +1,9 @@
 import { useRef, useEffect, useState } from 'react'
 import { Plus, ArrowDown, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
+import rehypeHighlight from 'rehype-highlight'
 import { ConversationNode } from '../lib/types'
 import { nodeQuestion, nodeAnswer } from '../lib/utils'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from '../lib/constants'
@@ -166,48 +170,55 @@ export function ChatNode({
             scrollbarWidth: 'none',
           }}
         >
-          <p
-            style={{
-              margin: 0,
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 10.5,
-              color: 'rgba(255,255,255,0.48)',
-              lineHeight: 1.7,
-              whiteSpace: 'pre-wrap',
-            }}
-          >
-            {visibleAnswer}
-            {!visibleAnswer && !error && (
-              <span style={{ color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>
-                Waiting for response...
-              </span>
-            )}
-            {isTyping && (
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 1.5,
-                  height: '0.9em',
-                  backgroundColor: accent,
-                  marginLeft: 2,
-                  verticalAlign: 'text-bottom',
-                  animation: 'bc-cursor-blink 0.75s steps(1) infinite',
-                }}
-              />
-            )}
-            {error && (
-              <span
-                style={{
-                  display: 'block',
-                  marginTop: visibleAnswer ? 8 : 0,
-                  color: '#f87171',
-                  fontStyle: 'italic',
-                }}
+          {visibleAnswer && (
+            <div className="bc-md">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                rehypePlugins={[rehypeHighlight]}
               >
-                ⚠ {error}
-              </span>
-            )}
-          </p>
+                {visibleAnswer}
+              </ReactMarkdown>
+            </div>
+          )}
+          {!visibleAnswer && !error && (
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 10.5,
+                color: 'rgba(255,255,255,0.2)',
+                fontStyle: 'italic',
+              }}
+            >
+              Waiting for response...
+            </span>
+          )}
+          {isTyping && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 1.5,
+                height: '0.9em',
+                backgroundColor: accent,
+                marginLeft: 2,
+                verticalAlign: 'text-bottom',
+                animation: 'bc-cursor-blink 0.75s steps(1) infinite',
+              }}
+            />
+          )}
+          {error && (
+            <span
+              style={{
+                display: 'block',
+                marginTop: visibleAnswer ? 8 : 0,
+                color: '#f87171',
+                fontSize: 10.5,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontStyle: 'italic',
+              }}
+            >
+              ⚠ {error}
+            </span>
+          )}
         </div>
       </div>
 

@@ -79,6 +79,71 @@ export default function App() {
       ::placeholder { color: rgba(255,255,255,0.22) !important; }
       ::-webkit-scrollbar { display: none; }
       * { scrollbar-width: none; }
+
+      /* Rendered markdown inside a chat card — kept all-monospace to match the
+         terminal look; only structure (headings, lists, code) is added. */
+      .bc-md {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10.5px;
+        line-height: 1.7;
+        color: rgba(255,255,255,0.48);
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .bc-md > *:first-child { margin-top: 0; }
+      .bc-md > *:last-child { margin-bottom: 0; }
+      .bc-md p { margin: 0 0 8px; }
+      .bc-md h1, .bc-md h2, .bc-md h3, .bc-md h4, .bc-md h5, .bc-md h6 {
+        margin: 12px 0 6px;
+        font-weight: 600;
+        line-height: 1.35;
+        color: rgba(255,255,255,0.72);
+      }
+      .bc-md h1 { font-size: 13px; }
+      .bc-md h2 { font-size: 12px; }
+      .bc-md h3 { font-size: 11px; }
+      .bc-md h4, .bc-md h5, .bc-md h6 { font-size: 10.5px; }
+      .bc-md ul, .bc-md ol { margin: 0 0 8px; padding-left: 18px; }
+      .bc-md li { margin: 2px 0; }
+      .bc-md li::marker { color: rgba(255,255,255,0.3); }
+      .bc-md a { color: #f5a623; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+      .bc-md strong { font-weight: 700; color: rgba(255,255,255,0.8); }
+      .bc-md em { font-style: italic; }
+      .bc-md blockquote {
+        margin: 8px 0;
+        padding: 2px 0 2px 10px;
+        border-left: 2px solid rgba(255,255,255,0.15);
+        color: rgba(255,255,255,0.4);
+      }
+      .bc-md hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 10px 0; }
+      .bc-md code {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        background: rgba(255,255,255,0.08);
+        padding: 1px 4px;
+        border-radius: 3px;
+        color: rgba(255,255,255,0.72);
+      }
+      .bc-md pre {
+        margin: 8px 0;
+        padding: 9px 11px;
+        border-radius: 5px;
+        background: #0d1117;
+        border: 1px solid rgba(255,255,255,0.07);
+        overflow-x: auto;
+      }
+      /* Inside a code block, let the highlight.js theme own the colors; just
+         strip the per-block padding/background it would otherwise add. */
+      .bc-md pre code {
+        background: none;
+        padding: 0;
+        font-size: 10px;
+        white-space: pre;
+      }
+      .bc-md table { border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+      .bc-md th, .bc-md td { border: 1px solid rgba(255,255,255,0.12); padding: 3px 7px; text-align: left; }
+      .bc-md th { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.65); font-weight: 600; }
+      .bc-md img { max-width: 100%; border-radius: 4px; }
     `
     document.head.appendChild(style)
     return () => document.head.removeChild(style)
