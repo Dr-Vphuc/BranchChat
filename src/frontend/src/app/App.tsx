@@ -4,8 +4,9 @@ import { ChatNode } from './components/ChatNode'
 import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
+import { DeleteConfirm } from './components/DeleteConfirm'
 import { ConversationNode, Conversation, EdgeKind, PendingInput, PositionedNode } from './lib/types'
-import { NODE_WIDTH, NODE_HEIGHT } from './lib/constants'
+import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from './lib/constants'
 import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
 import { computeLayout } from './lib/layout'
 import { loadState, saveState, clearState } from './lib/storage'
@@ -22,6 +23,7 @@ export default function App() {
   const [scale, setScale] = useState(() => loaded?.viewport.scale ?? 0.85)
   const [activeNodeId, setActiveNodeId] = useState<string | null>(() => loaded?.activeNodeId ?? null)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [creatingRoot, setCreatingRoot] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
@@ -346,28 +348,28 @@ export default function App() {
     convMeta.current = { id: crypto.randomUUID(), createdAt: Date.now() }
   }, [])
 
-  // Delete a node and its entire subtree (cascade). Confirms first when the
-  // node has descendants, since several cards disappear at once.
-  const handleDeleteNode = useCallback((nodeId: string) => {
-    // Gather the node + all descendants via breadth-first walk of parentId links.
-    const toDelete = new Set<string>([nodeId])
-    const queue = [nodeId]
+  // Gather a node + all its descendants via breadth-first walk of parentId links.
+  const collectSubtree = useCallback((rootId: string): Set<string> => {
+    const ids = new Set<string>([rootId])
+    const queue = [rootId]
     while (queue.length > 0) {
       const curr = queue.shift()!
       nodes.filter(n => n.parentId === curr).forEach(child => {
-        toDelete.add(child.id)
+        ids.add(child.id)
         queue.push(child.id)
       })
     }
+    return ids
+  }, [nodes])
 
-    const descendantCount = toDelete.size - 1
-    if (descendantCount > 0) {
-      const ok = window.confirm(
-        `Delete this card and its ${descendantCount} descendant${descendantCount !== 1 ? 's' : ''}? This can't be undone.`
-      )
-      if (!ok) return
-    }
+  // The × button only opens the themed confirm dialog; deletion happens on confirm.
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    setPendingDeleteId(nodeId)
+  }, [])
 
+  // Delete the node and its entire subtree (cascade) after confirmation.
+  const confirmDelete = useCallback((nodeId: string) => {
+    const toDelete = collectSubtree(nodeId)
     const parentId = nodes.find(n => n.id === nodeId)?.parentId ?? null
 
     setNodes(prev => prev.filter(n => !toDelete.has(n.id)))
@@ -387,7 +389,8 @@ export default function App() {
     if (pendingInput && toDelete.has(pendingInput.parentId)) {
       setPendingInput(null)
     }
-  }, [nodes, pendingInput])
+    setPendingDeleteId(null)
+  }, [collectSubtree, nodes, pendingInput])
 
   // Branch creation
   const handleSubmit = useCallback((question: string) => {
@@ -814,6 +817,21 @@ export default function App() {
           onCancel={() => setCreatingRoot(false)}
         />
       )}
+
+      {/* Themed confirm dialog before deleting a card (and its subtree) */}
+      {pendingDeleteId && (() => {
+        const deletingNode = nodes.find(n => n.id === pendingDeleteId)
+        if (!deletingNode) return null
+        return (
+          <DeleteConfirm
+            node={deletingNode}
+            accent={getBranchAccent(depthMap.get(pendingDeleteId) ?? 0)}
+            descendantCount={collectSubtree(pendingDeleteId).size - 1}
+            onConfirm={() => confirmDelete(pendingDeleteId)}
+            onCancel={() => setPendingDeleteId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
