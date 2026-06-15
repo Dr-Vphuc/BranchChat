@@ -202,7 +202,9 @@ export default function App() {
       .bc-md img { max-width: 100%; border-radius: 4px; }
     `
     document.head.appendChild(style)
-    return () => document.head.removeChild(style)
+    return () => {
+      document.head.removeChild(style)
+    }
   }, [])
 
   // Pan handlers
