@@ -1,31 +1,69 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, GitBranch, ChevronRight, Trash2, MessageSquarePlus } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, GitBranch, ChevronRight, Trash2, MessageSquarePlus, PanelLeft } from 'lucide-react'
 import { ChatNode } from './components/ChatNode'
 import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
 import { DeleteConfirm } from './components/DeleteConfirm'
 import { ConfirmDialog } from './components/ConfirmDialog'
-import { ConversationNode, Conversation, EdgeKind, PendingInput, PositionedNode } from './lib/types'
+import { HistorySidebar } from './components/HistorySidebar'
+import { ConversationNode, ConversationMeta, EdgeKind, PendingInput, PositionedNode } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from './lib/constants'
 import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
 import { computeLayout } from './lib/layout'
-import { loadState, saveState, clearState } from './lib/storage'
+import {
+  PersistedState,
+  loadIndex,
+  loadConversation,
+  saveConversation,
+  deleteConversation,
+  loadLastActiveId,
+  saveLastActiveId,
+  migrateLegacy,
+} from './lib/storage'
 import { streamChat, DEFAULT_MODEL } from './lib/api'
 
 const ACCENT_MAIN_COLOR = '#f59e0b'
 
-export default function App() {
-  // Read any persisted session once. Empty/absent → blank start.
-  const [loaded] = useState(() => loadState())
+/** A fresh, empty conversation (its own id) — the blank-canvas starting point. */
+function blankPersisted(): PersistedState {
+  const now = Date.now()
+  return {
+    version: 1,
+    conversation: { id: crypto.randomUUID(), title: 'Untitled', rootId: '', nodes: [], createdAt: now, updatedAt: now },
+    viewport: { offset: { x: 60, y: 60 }, scale: 0.85 },
+    activeNodeId: null,
+  }
+}
 
-  const [nodes, setNodes] = useState<ConversationNode[]>(() => loaded?.conversation.nodes ?? [])
-  const [offset, setOffset] = useState(() => loaded?.viewport.offset ?? { x: 60, y: 60 })
-  const [scale, setScale] = useState(() => loaded?.viewport.scale ?? 0.85)
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(() => loaded?.activeNodeId ?? null)
+/** Decide which conversation to open on load: last-active → most-recent → blank. */
+function bootstrap(): { index: ConversationMeta[]; persisted: PersistedState } {
+  migrateLegacy()
+  const index = loadIndex()
+  const lastId = loadLastActiveId()
+  let persisted: PersistedState | null = null
+  if (lastId) persisted = loadConversation(lastId)
+  if (!persisted && index.length > 0) persisted = loadConversation(index[0].id)
+  if (!persisted) persisted = blankPersisted()
+  return { index, persisted }
+}
+
+export default function App() {
+  // Resolve the history index + which conversation to open, once on mount.
+  const [boot] = useState(() => bootstrap())
+
+  const [index, setIndex] = useState<ConversationMeta[]>(boot.index)
+  const [currentConversationId, setCurrentConversationId] = useState(boot.persisted.conversation.id)
+
+  const [nodes, setNodes] = useState<ConversationNode[]>(boot.persisted.conversation.nodes)
+  const [offset, setOffset] = useState(boot.persisted.viewport.offset)
+  const [scale, setScale] = useState(boot.persisted.viewport.scale)
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(boot.persisted.activeNodeId)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [pendingDeleteConvId, setPendingDeleteConvId] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [creatingRoot, setCreatingRoot] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
@@ -38,11 +76,12 @@ export default function App() {
   currentScale.current = scale
   const currentOffset = useRef(offset)
   currentOffset.current = offset
-  // Stable conversation identity (id + createdAt) for persistence.
-  const convMeta = useRef({
-    id: loaded?.conversation.id ?? crypto.randomUUID(),
-    createdAt: loaded?.conversation.createdAt ?? Date.now(),
-  })
+  // createdAt of the open conversation (its id lives in currentConversationId state).
+  const createdAtRef = useRef(boot.persisted.conversation.createdAt)
+  // Mirror the index so the autosave effect can read it without subscribing (which
+  // would re-fire the effect on every save and loop).
+  const indexRef = useRef(index)
+  indexRef.current = index
 
   const activePath = getPathToRoot(activeNodeId ?? '', nodes)
   const breadcrumbChain = getChainToRoot(activeNodeId ?? '', nodes)
@@ -341,9 +380,9 @@ export default function App() {
     }, 80)
   }, [buildExchangeNode, runLLM, buildContext, centerOnWorld])
 
-  // Wipe everything back to a blank canvas.
+  // Empty the CURRENT conversation in place — keep its id so it stays put in the
+  // history (becomes an "Untitled" 0-card entry); autosave persists the blank state.
   const handleClear = useCallback(() => {
-    clearState()
     setNodes([])
     setActiveNodeId(null)
     setStreaming({})
@@ -351,8 +390,80 @@ export default function App() {
     setCreatingRoot(false)
     setOffset({ x: 60, y: 60 })
     setScale(0.85)
-    convMeta.current = { id: crypto.randomUUID(), createdAt: Date.now() }
   }, [])
+
+  // ── Conversation switching / history ────────────────────────────────────────
+
+  // Swap the canvas to a stored conversation's full state (and reset transient UI).
+  const applyPersisted = useCallback((p: PersistedState) => {
+    setNodes(p.conversation.nodes)
+    setOffset(p.viewport.offset)
+    setScale(p.viewport.scale)
+    setActiveNodeId(p.activeNodeId)
+    setCurrentConversationId(p.conversation.id)
+    createdAtRef.current = p.conversation.createdAt
+    setStreaming({})
+    setPendingInput(null)
+    setCreatingRoot(false)
+  }, [])
+
+  // Build the persisted snapshot of the current canvas (title derived from root Q).
+  const buildPersistedState = useCallback((): PersistedState => {
+    const root = nodes.find(n => n.parentId === null)
+    const rootQ = root ? nodeQuestion(root) : ''
+    const title = rootQ ? (rootQ.length > 40 ? rootQ.slice(0, 40) + '…' : rootQ) : 'Untitled'
+    return {
+      version: 1,
+      conversation: {
+        id: currentConversationId,
+        title,
+        rootId: root?.id ?? '',
+        nodes,
+        createdAt: createdAtRef.current,
+        updatedAt: Date.now(),
+      },
+      viewport: { offset, scale },
+      activeNodeId,
+    }
+  }, [nodes, offset, scale, activeNodeId, currentConversationId])
+
+  // Flush the current conversation to storage immediately (before switching away).
+  const persistCurrentNow = useCallback(() => {
+    setIndex(saveConversation(buildPersistedState()))
+    saveLastActiveId(currentConversationId)
+  }, [buildPersistedState, currentConversationId])
+
+  const switchConversation = useCallback((id: string) => {
+    setSidebarOpen(false)
+    if (id === currentConversationId) return
+    persistCurrentNow()
+    const target = loadConversation(id)
+    if (!target) return
+    applyPersisted(target)
+    saveLastActiveId(id)
+  }, [currentConversationId, persistCurrentNow, applyPersisted])
+
+  const newConversation = useCallback(() => {
+    setSidebarOpen(false)
+    // Already on a blank canvas → nothing to create (avoid stray "Untitled" rows).
+    if (nodes.length === 0) return
+    persistCurrentNow()
+    const fresh = blankPersisted()
+    applyPersisted(fresh)
+    setIndex(saveConversation(fresh))
+    saveLastActiveId(fresh.conversation.id)
+  }, [nodes.length, persistCurrentNow, applyPersisted])
+
+  const deleteConversationFromHistory = useCallback((id: string) => {
+    const nextIndex = deleteConversation(id)
+    setIndex(nextIndex)
+    if (id !== currentConversationId) return
+    // Deleted the open one → fall back to the most recent remaining, else blank.
+    const fallback = nextIndex.length > 0 ? loadConversation(nextIndex[0].id) : null
+    const target = fallback ?? blankPersisted()
+    applyPersisted(target)
+    saveLastActiveId(target.conversation.id)
+  }, [currentConversationId, applyPersisted])
 
   // Gather a node + all its descendants via breadth-first walk of parentId links.
   const collectSubtree = useCallback((rootId: string): Set<string> => {
@@ -432,24 +543,18 @@ export default function App() {
     }, 80)
   }, [pendingInput, nodes, viewportSize, buildExchangeNode, runLLM, buildContext])
 
-  // Auto-save the session (debounced) whenever the tree or view changes.
+  // Auto-save the open conversation (debounced) whenever the tree or view changes.
+  // Skip a brand-new untouched blank (not yet in history) so it doesn't clutter the
+  // list; but DO persist an existing conversation that was just emptied (Clear).
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      const root = nodes.find(n => n.parentId === null)
-      const rootQ = root ? nodeQuestion(root) : ''
-      const title = rootQ ? (rootQ.length > 40 ? rootQ.slice(0, 40) + '…' : rootQ) : 'Untitled'
-      const conversation: Conversation = {
-        id: convMeta.current.id,
-        title,
-        rootId: root?.id ?? '',
-        nodes,
-        createdAt: convMeta.current.createdAt,
-        updatedAt: Date.now(),
-      }
-      saveState({ version: 1, conversation, viewport: { offset, scale }, activeNodeId })
+      const known = indexRef.current.some(m => m.id === currentConversationId)
+      if (nodes.length === 0 && !known) return
+      setIndex(saveConversation(buildPersistedState()))
+      saveLastActiveId(currentConversationId)
     }, 400)
     return () => window.clearTimeout(handle)
-  }, [nodes, offset, scale, activeNodeId])
+  }, [nodes, offset, scale, activeNodeId, currentConversationId, buildPersistedState])
 
   // Dot grid background follows pan/zoom
   const dotSpacing = 28 * scale
@@ -602,6 +707,37 @@ export default function App() {
           pointerEvents: 'none',
         }}
       >
+        {/* History sidebar toggle */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          title="Lịch sử hội thoại"
+          style={{
+            pointerEvents: 'auto',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 28,
+            height: 28,
+            borderRadius: 5,
+            background: 'none',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: 'rgba(255,255,255,0.55)',
+            cursor: 'pointer',
+            transition: 'all 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.color = ACCENT_MAIN_COLOR
+            ;(e.currentTarget as HTMLButtonElement).style.borderColor = `${ACCENT_MAIN_COLOR}55`
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.55)'
+            ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.08)'
+          }}
+        >
+          <PanelLeft size={15} strokeWidth={2} />
+        </button>
+
         {/* Logo */}
         <div
           style={{
@@ -864,6 +1000,52 @@ export default function App() {
             onConfirm={() => confirmDelete(pendingDeleteId)}
             onCancel={() => setPendingDeleteId(null)}
           />
+        )
+      })()}
+
+      {/* Conversation history drawer */}
+      <HistorySidebar
+        open={sidebarOpen}
+        index={index}
+        currentId={currentConversationId}
+        onClose={() => setSidebarOpen(false)}
+        onSelect={switchConversation}
+        onNew={newConversation}
+        onDelete={setPendingDeleteConvId}
+      />
+
+      {/* Themed confirm dialog before deleting a whole conversation (main-thread yellow) */}
+      {pendingDeleteConvId && (() => {
+        const meta = index.find(m => m.id === pendingDeleteConvId)
+        return (
+          <ConfirmDialog
+            accent={getBranchAccent(0)}
+            title="Xóa chủ đề này?"
+            icon={Trash2}
+            confirmLabel="Xóa"
+            onConfirm={() => {
+              deleteConversationFromHistory(pendingDeleteConvId)
+              setPendingDeleteConvId(null)
+            }}
+            onCancel={() => setPendingDeleteConvId(null)}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 12.5,
+                color: 'rgba(255,255,255,0.6)',
+                lineHeight: 1.55,
+              }}
+            >
+              Chủ đề{' '}
+              <strong style={{ color: 'rgba(255,255,255,0.85)' }}>
+                “{meta?.title || 'Untitled'}”
+              </strong>{' '}
+              cùng <strong style={{ color: 'rgba(255,255,255,0.85)' }}>{meta?.nodeCount ?? 0}</strong> thẻ
+              sẽ bị xóa vĩnh viễn khỏi lịch sử. Không thể hoàn tác.
+            </p>
+          </ConfirmDialog>
         )
       })()}
     </div>

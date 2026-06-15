@@ -78,3 +78,20 @@ export function nodeQuestion(node: ConversationNode): string {
 export function nodeAnswer(node: ConversationNode): string {
   return node.messages.find(m => m.role === 'assistant')?.content ?? ''
 }
+
+// ── Formatting ────────────────────────────────────────────────────────────────
+
+/** Vietnamese relative time for history timestamps, e.g. "5 phút trước". */
+export function formatRelativeTime(ts: number): string {
+  const sec = Math.floor((Date.now() - ts) / 1000)
+  if (sec < 45) return 'vài giây trước'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} phút trước`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour} giờ trước`
+  const day = Math.floor(hour / 24)
+  if (day < 30) return `${day} ngày trước`
+  const month = Math.floor(day / 30)
+  if (month < 12) return `${month} tháng trước`
+  return `${Math.floor(month / 12)} năm trước`
+}

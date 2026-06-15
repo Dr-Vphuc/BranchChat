@@ -50,6 +50,16 @@ export interface Conversation {
   updatedAt: number
 }
 
+/** Lightweight summary of a conversation — enough to list & search the history
+ *  without loading the full node tree. Derived from a Conversation on save. */
+export interface ConversationMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  nodeCount: number
+}
+
 /** Transient pointer to where a new node will be created (drives the InputBar). */
 export interface PendingInput {
   parentId: string
