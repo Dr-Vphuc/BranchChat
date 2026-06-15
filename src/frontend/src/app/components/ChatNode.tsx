@@ -4,12 +4,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
-import { ConversationNode } from '../lib/types'
+import { PositionedNode } from '../lib/types'
 import { nodeQuestion, nodeAnswer } from '../lib/utils'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from '../lib/constants'
 
 interface ChatNodeProps {
-  node: ConversationNode
+  node: PositionedNode
   branchDepth: number
   isActive: boolean
   isOnActivePath: boolean
@@ -66,6 +66,8 @@ export function ChatNode({
         top: node.position.y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
+        // Glide to new spots when the auto-layout re-arranges on edits.
+        transition: 'left 0.25s ease, top 0.25s ease',
       }}
       onClick={() => onActivate(node.id)}
       onMouseEnter={() => setHovered(true)}

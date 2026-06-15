@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { ConversationNode } from '../lib/types'
+import { PositionedNode } from '../lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, getBranchAccent } from '../lib/constants'
 
 const MM_W = 190
@@ -8,7 +8,7 @@ const MM_SCALE_X = MM_W / WORLD_WIDTH
 const MM_SCALE_Y = MM_H / WORLD_HEIGHT
 
 interface MinimapProps {
-  nodes: ConversationNode[]
+  nodes: PositionedNode[]
   depthMap: Map<string, number>
   offset: { x: number; y: number }
   scale: number

@@ -4,9 +4,10 @@ import { ChatNode } from './components/ChatNode'
 import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
-import { ConversationNode, Conversation, EdgeKind, PendingInput } from './lib/types'
-import { NODE_WIDTH, NODE_HEIGHT, BRANCH_GAP_X, MAIN_GAP_Y, BRANCH_SPACING_Y } from './lib/constants'
+import { ConversationNode, Conversation, EdgeKind, PendingInput, PositionedNode } from './lib/types'
+import { NODE_WIDTH, NODE_HEIGHT } from './lib/constants'
 import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
+import { computeLayout } from './lib/layout'
 import { loadState, saveState, clearState } from './lib/storage'
 import { streamChat, DEFAULT_MODEL } from './lib/api'
 
@@ -42,6 +43,14 @@ export default function App() {
   const activePath = getPathToRoot(activeNodeId ?? '', nodes)
   const breadcrumbChain = getChainToRoot(activeNodeId ?? '', nodes)
   const depthMap = buildDepthMap(nodes)
+
+  // Layout is derived purely from the tree structure and recomputed each render
+  // (like depthMap above). Positions are never stored — cards re-arrange on edits.
+  const layout = computeLayout(nodes)
+  const positioned: PositionedNode[] = nodes.map(n => ({
+    ...n,
+    position: layout.get(n.id) ?? { x: 0, y: 0 },
+  }))
 
   // Sync viewport size
   useEffect(() => {
@@ -221,9 +230,9 @@ export default function App() {
   }, [viewportSize])
 
   const fitToScreen = useCallback(() => {
-    if (nodes.length === 0) return
-    const xs = nodes.map(n => n.position.x)
-    const ys = nodes.map(n => n.position.y)
+    if (positioned.length === 0) return
+    const xs = positioned.map(n => n.position.x)
+    const ys = positioned.map(n => n.position.y)
     const minX = Math.min(...xs)
     const minY = Math.min(...ys)
     const maxX = Math.max(...xs) + NODE_WIDTH
@@ -241,16 +250,16 @@ export default function App() {
       x: pad + (viewportSize.width - pad * 2 - contentW * newScale) / 2 - minX * newScale,
       y: pad + (viewportSize.height - pad * 2 - contentH * newScale) / 2 - minY * newScale,
     })
-  }, [nodes, viewportSize])
+  }, [positioned, viewportSize])
 
   const panToNode = useCallback((nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId)
-    if (!node) return
+    const p = layout.get(nodeId)
+    if (!p) return
     setOffset({
-      x: viewportSize.width / 2 - (node.position.x + NODE_WIDTH / 2) * currentScale.current,
-      y: viewportSize.height / 3 - (node.position.y + NODE_HEIGHT / 3) * currentScale.current,
+      x: viewportSize.width / 2 - (p.x + NODE_WIDTH / 2) * currentScale.current,
+      y: viewportSize.height / 3 - (p.y + NODE_HEIGHT / 3) * currentScale.current,
     })
-  }, [nodes, viewportSize])
+  }, [layout, viewportSize])
 
   const centerOnWorld = useCallback((x: number, y: number) => {
     setOffset({
@@ -265,7 +274,6 @@ export default function App() {
     id: string,
     parentId: string | null,
     edgeKind: EdgeKind,
-    position: { x: number; y: number },
     question: string,
   ): ConversationNode => {
     const now = Date.now()
@@ -273,7 +281,6 @@ export default function App() {
       id,
       parentId,
       edgeKind,
-      position,
       messages: [
         { id: `${id}-u`, role: 'user', content: question, createdAt: now },
         { id: `${id}-a`, role: 'assistant', content: '', model: DEFAULT_MODEL, createdAt: now + 1 },
@@ -315,13 +322,15 @@ export default function App() {
   // Create the first node of an empty canvas (no parent).
   const handleCreateRoot = useCallback((question: string) => {
     const newId = crypto.randomUUID()
-    const position = { x: 120, y: 120 }
-    const newNode = buildExchangeNode(newId, null, 'continue', position, question)
+    const newNode = buildExchangeNode(newId, null, 'continue', question)
     setNodes([newNode])
     setActiveNodeId(newId)
     setCreatingRoot(false)
     runLLM(newId, buildContext(newId, [newNode]))
-    setTimeout(() => centerOnWorld(position.x, position.y), 80)
+    setTimeout(() => {
+      const p = computeLayout([newNode]).get(newId)
+      if (p) centerOnWorld(p.x, p.y)
+    }, 80)
   }, [buildExchangeNode, runLLM, buildContext, centerOnWorld])
 
   // Wipe everything back to a blank canvas.
@@ -386,248 +395,29 @@ export default function App() {
     const parentNode = nodes.find(n => n.id === pendingInput.parentId)
     if (!parentNode) return
 
-    let newX: number, newY: number
-
-    if (pendingInput.mode === 'continue') {
-      // Continue down: create child node directly below parent (same X column)
-      newX = parentNode.position.x
-
-      // Find all descendants in the same column
-      const sameColumnDescendants = nodes.filter(n => {
-        if (n.position.x !== parentNode.position.x) return false
-        // Check if this node is a descendant of parentNode
-        let current = nodes.find(p => p.id === n.parentId)
-        while (current) {
-          if (current.id === parentNode.id) return true
-          current = nodes.find(p => p.id === current!.parentId)
-        }
-        return false
-      })
-
-      const maxDescendantY = sameColumnDescendants.length > 0
-        ? Math.max(...sameColumnDescendants.map(n => n.position.y))
-        : parentNode.position.y
-      newY = maxDescendantY + NODE_HEIGHT + MAIN_GAP_Y
-    } else {
-      // Branch right: create new branch to the right of parent
-      const branchX = parentNode.position.x + NODE_WIDTH + BRANCH_GAP_X
-      newX = branchX
-
-      // Find all existing branches at the same level (same parentId, same X distance from parent)
-      const existingBranches = nodes.filter(n =>
-        n.parentId === parentNode.id && Math.abs(n.position.x - branchX) < 10
-      )
-
-      // Calculate Y position for the new branch based on total number of branches
-      const totalBranches = existingBranches.length + 1 // including the new one
-
-      // Calculate total vertical space needed
-      const totalHeight = (totalBranches - 1) * (NODE_HEIGHT + BRANCH_SPACING_Y)
-      const startY = parentNode.position.y - totalHeight / 2
-
-      // The new branch will be at the end (for now, we'll recalculate all positions)
-      newY = startY + existingBranches.length * (NODE_HEIGHT + BRANCH_SPACING_Y)
-    }
-
     const newId = crypto.randomUUID()
-    const newNode = buildExchangeNode(newId, pendingInput.parentId, pendingInput.mode, { x: newX, y: newY }, question)
+    const newNode = buildExchangeNode(newId, pendingInput.parentId, pendingInput.mode, question)
+    const nextNodes = [...nodes, newNode]
 
-    setNodes(prev => {
-      const updated = [...prev, newNode]
-
-      const getDescendants = (nodeId: string, nodeList: ConversationNode[]): Set<string> => {
-        const result = new Set<string>()
-        const queue = [nodeId]
-        while (queue.length > 0) {
-          const curr = queue.shift()!
-          nodeList.filter(n => n.parentId === curr).forEach(child => {
-            result.add(child.id)
-            queue.push(child.id)
-          })
-        }
-        return result
-      }
-
-      // 'continue' mode: G (=parentNode) just grew a child straight down. Any node
-      // sharing G's column that sits below G and is NOT part of G's own subtree would
-      // be overrun by the new child — resolve per case:
-      //   • a younger branch sibling (same parent) slides one column to the right;
-      //   • a node on another thread pushes its owning node (+subtree) down to clear.
-      if (pendingInput.mode === 'continue') {
-        const gExclude = getDescendants(parentNode.id, updated) // already includes the new child
-        gExclude.add(parentNode.id)
-
-        const colliding = updated.filter(n =>
-          Math.abs(n.position.x - parentNode.position.x) < 10 &&
-          !gExclude.has(n.id) &&
-          n.position.y > parentNode.position.y &&
-          n.position.y < newY + NODE_HEIGHT + MAIN_GAP_Y
-        )
-
-        if (colliding.length > 0) {
-          const xShift = NODE_WIDTH + BRANCH_GAP_X
-          const shiftRightSet = new Set<string>()
-          const pushDownSet = new Set<string>()
-          let downShift = 0
-
-          colliding.forEach(n => {
-            if (n.edgeKind === 'branch' && n.parentId === parentNode.parentId) {
-              // Younger branch sibling → relocate it (and its subtree) one column right
-              shiftRightSet.add(n.id)
-              getDescendants(n.id, updated).forEach(id => shiftRightSet.add(id))
-            } else if (n.parentId) {
-              // Cross-thread node → push its owner node (and that owner's subtree) down
-              const need = newY + NODE_HEIGHT + MAIN_GAP_Y - n.position.y
-              if (need > downShift) downShift = need
-              pushDownSet.add(n.parentId)
-              getDescendants(n.parentId, updated).forEach(id => pushDownSet.add(id))
-            }
-          })
-
-          if (shiftRightSet.size > 0 || downShift > 0) {
-            return updated.map(node => {
-              if (shiftRightSet.has(node.id))
-                return { ...node, position: { ...node.position, x: node.position.x + xShift } }
-              if (downShift > 0 && pushDownSet.has(node.id))
-                return { ...node, position: { ...node.position, y: node.position.y + downShift } }
-              return node
-            })
-          }
-        }
-      }
-
-      if (pendingInput.mode === 'branch') {
-        const branchX = parentNode.position.x + NODE_WIDTH + BRANCH_GAP_X
-        const allBranches = updated.filter(n =>
-          n.parentId === parentNode.id && Math.abs(n.position.x - branchX) < 10
-        )
-
-        const totalBranches = allBranches.length
-        const totalHeight = (totalBranches - 1) * (NODE_HEIGHT + BRANCH_SPACING_Y)
-        const startY = parentNode.position.y - totalHeight / 2
-
-        // Precompute branch offsets and their descendant sets
-        const branchOffsets = new Map<string, number>()
-        const branchDescendants = new Map<string, Set<string>>()
-        allBranches.forEach((branch, index) => {
-          const newBranchY = startY + index * (NODE_HEIGHT + BRANCH_SPACING_Y)
-          branchOffsets.set(branch.id, newBranchY - branch.position.y)
-          branchDescendants.set(branch.id, getDescendants(branch.id, updated))
-        })
-
-        // Reverse-order Scenario 1: the sibling grew its downward thread BEFORE this
-        // branch existed, so the re-center above (which assumes 1-card-tall slots)
-        // drops the new branch onto that thread. If it overlaps a sibling's column
-        // extent, relocate the new branch (+subtree) one column right instead.
-        const off = (id: string) => branchOffsets.get(id) ?? 0
-        const newNodeY = newNode.position.y + off(newNode.id)
-        const relocateRightSet = new Set<string>()
-        for (const sib of allBranches) {
-          if (sib.id === newNode.id) continue
-          const sibSubtree = branchDescendants.get(sib.id)
-          const sibColNodes = updated.filter(u =>
-            sibSubtree?.has(u.id) && Math.abs(u.position.x - branchX) < 10
-          )
-          const sibTop = sib.position.y + off(sib.id)
-          const sibBottom = Math.max(sibTop, ...sibColNodes.map(u => u.position.y)) + NODE_HEIGHT
-          if (newNodeY < sibBottom + BRANCH_SPACING_Y &&
-              newNodeY + NODE_HEIGHT > sibTop - BRANCH_SPACING_Y) {
-            relocateRightSet.add(newNode.id)
-            branchDescendants.get(newNode.id)?.forEach(id => relocateRightSet.add(id))
-            break
-          }
-        }
-
-        // Vertical extent of the entire branch cluster
-        const topBranchY = startY
-        const bottomBranchEdge = startY + totalHeight + NODE_HEIGHT
-
-        // Find adjacent nodes in same column as parent
-        const sameColNodes = updated.filter(n =>
-          Math.abs(n.position.x - parentNode.position.x) < 10 && n.id !== parentNode.id
-        )
-        const nodeAbove = sameColNodes
-          .filter(n => n.position.y < parentNode.position.y)
-          .reduce<ConversationNode | null>((best, n) => (!best || n.position.y > best.position.y) ? n : best, null)
-        const nodeBelow = sameColNodes
-          .filter(n => n.position.y > parentNode.position.y)
-          .reduce<ConversationNode | null>((best, n) => (!best || n.position.y < best.position.y) ? n : best, null)
-
-        // How much space is missing above/below the branch cluster
-        let upwardShift = 0
-        if (nodeAbove) {
-          const gap = topBranchY - MAIN_GAP_Y - (nodeAbove.position.y + NODE_HEIGHT)
-          if (gap < 0) upwardShift = -gap
-        }
-        let downwardShift = 0
-        if (nodeBelow) {
-          const gap = nodeBelow.position.y - (bottomBranchEdge + MAIN_GAP_Y)
-          if (gap < 0) downwardShift = -gap
-        }
-
-        // Subtree rooted at parentNode (do not move these when pushing ancestors)
-        const parentSubtree = getDescendants(parentNode.id, updated)
-        parentSubtree.add(parentNode.id)
-
-        // Collect all ancestors of parentNode + their other descendants → push up
-        const pushUpSet = new Set<string>()
-        if (upwardShift > 0) {
-          let curr: ConversationNode | undefined = updated.find(n => n.id === parentNode.parentId)
-          const visited = new Set<string>()
-          while (curr && !visited.has(curr.id)) {
-            visited.add(curr.id)
-            pushUpSet.add(curr.id)
-            getDescendants(curr.id, updated).forEach(dId => {
-              if (!parentSubtree.has(dId)) pushUpSet.add(dId)
-            })
-            curr = updated.find(n => n.id === curr!.parentId)
-          }
-        }
-
-        // nodeBelow and all its descendants → push down
-        const pushDownSet = new Set<string>()
-        if (downwardShift > 0 && nodeBelow) {
-          pushDownSet.add(nodeBelow.id)
-          getDescendants(nodeBelow.id, updated).forEach(id => pushDownSet.add(id))
-        }
-
-        return updated.map(node => {
-          let next = node
-          // Branch re-centering (vertical) applies first
-          for (const [branchId, deltaY] of branchOffsets.entries()) {
-            if (node.id === branchId || branchDescendants.get(branchId)?.has(node.id)) {
-              next = { ...node, position: { ...node.position, y: node.position.y + deltaY } }
-              break
-            }
-          }
-          // The new branch may ALSO need to dodge an older sibling's thread (horizontal)
-          if (relocateRightSet.has(node.id))
-            next = { ...next, position: { ...next.position, x: next.position.x + (NODE_WIDTH + BRANCH_GAP_X) } }
-          if (pushUpSet.has(node.id))
-            next = { ...next, position: { ...next.position, y: next.position.y - upwardShift } }
-          if (pushDownSet.has(node.id))
-            next = { ...next, position: { ...next.position, y: next.position.y + downwardShift } }
-          return next
-        })
-      }
-
-      return updated
-    })
+    setNodes(nextNodes)
     setActiveNodeId(newId)
     setPendingInput(null)
 
-    runLLM(newId, buildContext(newId, [...nodes, newNode]))
+    runLLM(newId, buildContext(newId, nextNodes))
 
-    // Pan to new node
+    // Pan to the new node if it would land off-screen — its position comes from
+    // the freshly recomputed layout of the updated tree.
     setTimeout(() => {
-      const screenX = newX * currentScale.current + currentOffset.current.x
-      const screenY = newY * currentScale.current + currentOffset.current.y
+      const p = computeLayout(nextNodes).get(newId)
+      if (!p) return
+      const screenX = p.x * currentScale.current + currentOffset.current.x
+      const screenY = p.y * currentScale.current + currentOffset.current.y
       const vw = viewportSize.width
       const vh = viewportSize.height
       if (screenX > vw - 480 || screenX < 80 || screenY > vh - 360 || screenY < 80) {
         setOffset({
-          x: vw / 2 - (newX + NODE_WIDTH / 2) * currentScale.current,
-          y: vh / 3 - (newY + NODE_HEIGHT / 3) * currentScale.current,
+          x: vw / 2 - (p.x + NODE_WIDTH / 2) * currentScale.current,
+          y: vh / 3 - (p.y + NODE_HEIGHT / 3) * currentScale.current,
         })
       }
     }, 80)
@@ -704,10 +494,10 @@ export default function App() {
           }}
         >
           {/* SVG connector lines */}
-          <ConnectionLines nodes={nodes} depthMap={depthMap} activePathIds={activePath} />
+          <ConnectionLines nodes={positioned} depthMap={depthMap} activePathIds={activePath} />
 
           {/* Chat nodes */}
-          {nodes.map(node => (
+          {positioned.map(node => (
             <ChatNode
               key={node.id}
               node={node}
@@ -993,7 +783,7 @@ export default function App() {
 
       {/* Minimap */}
       <Minimap
-        nodes={nodes}
+        nodes={positioned}
         depthMap={depthMap}
         offset={offset}
         scale={scale}

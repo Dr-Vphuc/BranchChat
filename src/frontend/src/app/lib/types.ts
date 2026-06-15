@@ -1,8 +1,15 @@
 // ── Domain layer ────────────────────────────────────────────────────────────
-// Persisted business objects. Layout (position) lives here too because nodes are
-// freely draggable; transient UI state (typing animation) does NOT — it is held
-// separately in App state. Derived values (branchDepth, isMainThread) are computed
-// from the tree in lib/utils, never stored.
+// Persisted business objects store only the conversation STRUCTURE. Layout is a
+// pure function of that structure (see lib/layout) — recomputed on every change,
+// never stored — so cards can never overlap and re-arrange themselves on edits.
+// Transient UI state (typing animation) is held separately in App state. Derived
+// values (branchDepth, isMainThread, position) are computed, never stored.
+
+/** A point in world space. */
+export interface Point {
+  x: number
+  y: number
+}
 
 /** Who produced a message. Aligned with the LLM API message format. */
 export type Role = 'user' | 'assistant' | 'system'
@@ -28,9 +35,10 @@ export interface ConversationNode {
   edgeKind: EdgeKind
   /** Usually [user, assistant]; an array to allow tool/multi-part turns later. */
   messages: Message[]
-  /** Stored layout — enables free drag-and-drop. */
-  position: { x: number; y: number }
 }
+
+/** A node with its derived layout attached — produced for rendering only. */
+export type PositionedNode = ConversationNode & { position: Point }
 
 /** The whole conversation tree. */
 export interface Conversation {

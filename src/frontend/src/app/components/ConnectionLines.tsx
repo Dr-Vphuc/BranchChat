@@ -1,8 +1,8 @@
-import { ConversationNode } from '../lib/types'
+import { PositionedNode } from '../lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, getBranchAccent } from '../lib/constants'
 
 interface ConnectionLinesProps {
-  nodes: ConversationNode[]
+  nodes: PositionedNode[]
   depthMap: Map<string, number>
   activePathIds: Set<string>
 }
@@ -29,7 +29,7 @@ export function ConnectionLines({ nodes, depthMap, activePathIds }: ConnectionLi
   const connections = nodes
     .filter(n => n.parentId !== null)
     .map(n => ({ child: n, parent: nodeMap.get(n.parentId!) }))
-    .filter((c): c is { child: ConversationNode; parent: ConversationNode } => c.parent !== undefined)
+    .filter((c): c is { child: PositionedNode; parent: PositionedNode } => c.parent !== undefined)
 
   return (
     <svg
