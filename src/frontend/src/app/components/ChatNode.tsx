@@ -8,6 +8,9 @@ import { PositionedNode } from '../lib/types'
 import { nodeQuestion, nodeAnswer } from '../lib/utils'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from '../lib/constants'
 
+// Collapsed questions show at most this many lines before a "Xem thêm" toggle appears.
+const QUESTION_CLAMP_LINES = 3
+
 interface ChatNodeProps {
   node: PositionedNode
   branchDepth: number
@@ -33,13 +36,24 @@ export function ChatNode({
   onDelete,
 }: ChatNodeProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const questionRef = useRef<HTMLParagraphElement>(null)
   const [hovered, setHovered] = useState(false)
+  const [questionExpanded, setQuestionExpanded] = useState(false)
+  const [isClamped, setIsClamped] = useState(false)
   const accent = getBranchAccent(branchDepth)
 
   const question = nodeQuestion(node)
   const answer = nodeAnswer(node)
   const isTyping = streaming?.isTyping ?? false
   const error = streaming?.error
+
+  // Detect whether the question is longer than the clamp, so the toggle only
+  // appears when there's actually hidden text. Measured while collapsed; the
+  // question text never changes mid-stream, so a single pass is accurate.
+  useEffect(() => {
+    const el = questionRef.current
+    if (el) setIsClamped(el.scrollHeight > el.clientHeight + 1)
+  }, [question])
 
   // Content streams in live, so the message itself is the visible answer.
   const visibleAnswer = answer
@@ -147,19 +161,52 @@ export function ChatNode({
             flexShrink: 0,
             padding: '9px 11px 8px',
             borderBottom: '1px solid rgba(255,255,255,0.035)',
+            ...(questionExpanded
+              ? { maxHeight: 120, overflowY: 'auto', scrollbarWidth: 'none' as const }
+              : {}),
           }}
         >
           <p
+            ref={questionRef}
             style={{
               margin: 0,
               fontFamily: "'DM Sans', sans-serif",
               fontSize: 12,
               color: 'rgba(255,255,255,0.82)',
               lineHeight: 1.52,
+              ...(questionExpanded
+                ? {}
+                : {
+                    display: '-webkit-box',
+                    WebkitLineClamp: QUESTION_CLAMP_LINES,
+                    WebkitBoxOrient: 'vertical' as const,
+                    overflow: 'hidden',
+                  }),
             }}
           >
             {question}
           </p>
+          {isClamped && (
+            <button
+              data-node="true"
+              onClick={e => {
+                e.stopPropagation()
+                setQuestionExpanded(v => !v)
+              }}
+              style={{
+                marginTop: 3,
+                padding: 0,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 10,
+                color: `${accent}aa`,
+              }}
+            >
+              {questionExpanded ? 'Thu gọn' : 'Xem thêm'}
+            </button>
+          )}
         </div>
 
         {/* Answer */}
