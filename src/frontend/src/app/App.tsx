@@ -5,6 +5,7 @@ import { ConnectionLines } from './components/ConnectionLines'
 import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
 import { DeleteConfirm } from './components/DeleteConfirm'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConversationNode, Conversation, EdgeKind, PendingInput, PositionedNode } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from './lib/constants'
 import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
@@ -24,6 +25,7 @@ export default function App() {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(() => loaded?.activeNodeId ?? null)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
   const [creatingRoot, setCreatingRoot] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 })
@@ -85,6 +87,10 @@ export default function App() {
       @keyframes bc-slide-up {
         from { opacity: 0; transform: translateX(-50%) translateY(8px); }
         to { opacity: 1; transform: translateX(-50%) translateY(0); }
+      }
+      @keyframes bc-pop-in {
+        from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
       }
       * { box-sizing: border-box; }
       ::placeholder { color: rgba(255,255,255,0.22) !important; }
@@ -690,7 +696,7 @@ export default function App() {
         {/* Clear / start over */}
         {nodes.length > 0 && (
           <button
-            onClick={handleClear}
+            onClick={() => setConfirmClear(true)}
             title="Clear canvas"
             style={{
               pointerEvents: 'auto',
@@ -816,6 +822,34 @@ export default function App() {
           onSubmit={handleCreateRoot}
           onCancel={() => setCreatingRoot(false)}
         />
+      )}
+
+      {/* Themed confirm dialog before wiping the whole canvas (main-thread yellow) */}
+      {confirmClear && (
+        <ConfirmDialog
+          accent={getBranchAccent(0)}
+          title="Xóa toàn bộ canvas?"
+          icon={Trash2}
+          confirmLabel="Xóa hết"
+          onConfirm={() => {
+            handleClear()
+            setConfirmClear(false)
+          }}
+          onCancel={() => setConfirmClear(false)}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 12.5,
+              color: 'rgba(255,255,255,0.6)',
+              lineHeight: 1.55,
+            }}
+          >
+            Toàn bộ <strong style={{ color: 'rgba(255,255,255,0.85)' }}>{nodes.length}</strong> thẻ trên
+            canvas sẽ bị xóa vĩnh viễn và bắt đầu lại từ trang trắng. Không thể hoàn tác.
+          </p>
+        </ConfirmDialog>
       )}
 
       {/* Themed confirm dialog before deleting a card (and its subtree) */}
