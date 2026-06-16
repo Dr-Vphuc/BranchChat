@@ -102,7 +102,9 @@ export default function App() {
     update()
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
-  }, [])
+    // Re-measure once `loading` flips false and the canvas mounts (on first mount
+    // the loading screen is shown, so the container isn't there to measure yet).
+  }, [loading])
 
   // Force dark mode
   useEffect(() => {
@@ -263,7 +265,10 @@ export default function App() {
     if (!el) return
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
-  }, [handleWheel])
+    // `loading` is a dep so this re-runs once the canvas (containerRef) actually
+    // mounts — on first mount the loading screen renders instead, so the listener
+    // would otherwise never attach and wheel-zoom would be dead.
+  }, [handleWheel, loading])
 
   const zoomBy = useCallback((factor: number) => {
     const cx = viewportSize.width / 2
