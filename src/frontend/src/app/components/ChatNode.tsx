@@ -20,6 +20,8 @@ interface ChatNodeProps {
   onBranch: (parentId: string) => void
   onContinue: (parentId: string) => void
   onDelete: (id: string) => void
+  /** Right-click → open the card action menu at the cursor (screen coords). */
+  onContextMenu: (id: string, x: number, y: number) => void
 }
 
 export function ChatNode({
@@ -32,6 +34,7 @@ export function ChatNode({
   onBranch,
   onContinue,
   onDelete,
+  onContextMenu,
 }: ChatNodeProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState(false)
@@ -71,6 +74,11 @@ export function ChatNode({
         transition: 'left 0.25s ease, top 0.25s ease',
       }}
       onClick={() => onActivate(node.id)}
+      onContextMenu={e => {
+        e.preventDefault()
+        e.stopPropagation()
+        onContextMenu(node.id, e.clientX, e.clientY)
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >

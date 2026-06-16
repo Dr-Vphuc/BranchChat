@@ -1,22 +1,28 @@
 import { useState, useRef, useEffect } from 'react'
-import { GitBranch, ArrowDown, X, CornerDownLeft, MessageSquarePlus } from 'lucide-react'
+import { GitBranch, ArrowDown, X, CornerDownLeft, MessageSquarePlus, Pencil } from 'lucide-react'
 import { ConversationNode, EdgeKind } from '../lib/types'
 import { nodeQuestion } from '../lib/utils'
 
 interface InputBarProps {
   /** Absent when starting a new conversation (mode 'root'). */
   parentNode?: ConversationNode
-  mode: EdgeKind | 'root'
+  mode: EdgeKind | 'root' | 'edit'
+  /** Pre-fill the textarea (used by 'edit' to load the current question). */
+  initialValue?: string
   onSubmit: (question: string) => void
   onCancel: () => void
 }
 
-export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps) {
-  const [value, setValue] = useState('')
+export function InputBar({ parentNode, mode, initialValue, onSubmit, onCancel }: InputBarProps) {
+  const [value, setValue] = useState(initialValue ?? '')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    textareaRef.current?.focus()
+    // Focus and place the caret at the end (matters when pre-filled for editing).
+    const el = textareaRef.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
   }, [])
 
   const handleSubmit = () => {
@@ -40,6 +46,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
   const canSubmit = value.trim().length > 0
   const isBranch = mode === 'branch'
   const isRoot = mode === 'root'
+  const isEdit = mode === 'edit'
   const parentQuestion = parentNode ? nodeQuestion(parentNode) : ''
 
   return (
@@ -87,6 +94,8 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
         >
           {isRoot ? (
             <MessageSquarePlus size={11} color="#f59e0b" strokeWidth={2} />
+          ) : isEdit ? (
+            <Pencil size={11} color="#f59e0b" strokeWidth={2} />
           ) : isBranch ? (
             <GitBranch size={11} color="#f59e0b" strokeWidth={2} />
           ) : (
@@ -96,12 +105,18 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             style={{
               fontFamily: "'DM Sans', sans-serif",
               fontSize: 10.5,
-              color: isRoot ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.38)',
+              color: isRoot || isEdit ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.38)',
             }}
           >
-            {isRoot ? 'Start a conversation' : isBranch ? 'Branch from:' : 'Continue from:'}
+            {isRoot
+              ? 'Start a conversation'
+              : isEdit
+                ? 'Sửa câu hỏi'
+                : isBranch
+                  ? 'Branch from:'
+                  : 'Continue from:'}
           </span>
-          {!isRoot && (
+          {!isRoot && !isEdit && (
             <span
               style={{
                 fontFamily: "'DM Sans', sans-serif",
@@ -118,7 +133,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
                 : parentQuestion}
             </span>
           )}
-          {isRoot && <span style={{ flex: 1 }} />}
+          {(isRoot || isEdit) && <span style={{ flex: 1 }} />}
           <button
             onClick={onCancel}
             style={{
@@ -147,7 +162,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             value={value}
             onChange={e => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isRoot ? 'Ask anything…' : isBranch ? 'Ask a tangential question…' : 'Continue the thread…'}
+            placeholder={isRoot ? 'Ask anything…' : isEdit ? 'Sửa nội dung câu hỏi…' : isBranch ? 'Ask a tangential question…' : 'Continue the thread…'}
             rows={3}
             style={{
               width: '100%',
@@ -204,7 +219,7 @@ export function InputBar({ parentNode, mode, onSubmit, onCancel }: InputBarProps
             }}
           >
             <CornerDownLeft size={11} strokeWidth={2} />
-            {isRoot ? 'Start' : isBranch ? 'Branch' : 'Continue'}
+            {isRoot ? 'Start' : isEdit ? 'Lưu' : isBranch ? 'Branch' : 'Continue'}
           </button>
         </div>
       </div>

@@ -6,8 +6,9 @@ import { Minimap } from './components/Minimap'
 import { InputBar } from './components/InputBar'
 import { DeleteConfirm } from './components/DeleteConfirm'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { CardContextMenu } from './components/CardContextMenu'
 import { HistorySidebar } from './components/HistorySidebar'
-import { ConversationNode, ConversationMeta, EdgeKind, PendingInput, PositionedNode } from './lib/types'
+import { ConversationNode, ConversationMeta, EdgeKind, Message, PendingInput, PositionedNode } from './lib/types'
 import { NODE_WIDTH, NODE_HEIGHT, getBranchAccent } from './lib/constants'
 import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQuestion } from './lib/utils'
 import { computeLayout } from './lib/layout'
@@ -47,6 +48,10 @@ export default function App() {
   const [scale, setScale] = useState(0.85)
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
+  // Right-click card menu (screen coords) + internal card clipboard + edit target.
+  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
+  const [clipboard, setClipboard] = useState<Message[] | null>(null)
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [pendingDeleteConvId, setPendingDeleteConvId] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
@@ -530,6 +535,73 @@ export default function App() {
     setPendingDeleteId(null)
   }, [collectSubtree, nodes, pendingInput])
 
+  // ── Card context-menu actions (right-click) ─────────────────────────────────
+
+  // Copy a card into the internal clipboard (its messages only — not its subtree).
+  const copyNode = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId)
+    if (node) setClipboard(node.messages.map(m => ({ ...m })))
+  }, [nodes])
+
+  // Build a fresh node (new ids) cloning the clipboard's messages verbatim — a true
+  // duplicate, no LLM re-run. Returns null when nothing has been copied.
+  const nodeFromClipboard = useCallback((parentId: string | null, edgeKind: EdgeKind): ConversationNode | null => {
+    if (!clipboard) return null
+    const newId = crypto.randomUUID()
+    const now = Date.now()
+    return {
+      id: newId,
+      parentId,
+      edgeKind,
+      messages: clipboard.map((m, i) => ({ ...m, id: `${newId}-${i}`, createdAt: now + i })),
+    }
+  }, [clipboard])
+
+  // Paste the copied card as a child of the target (continue = below, branch = side).
+  const pasteChild = useCallback((targetId: string, edgeKind: EdgeKind) => {
+    const n = nodeFromClipboard(targetId, edgeKind)
+    if (!n) return
+    setNodes(prev => [...prev, n])
+    setActiveNodeId(n.id)
+  }, [nodeFromClipboard])
+
+  // Paste the copied card as a new PARENT inserted between the target and its old
+  // parent. If the target was the root, the pasted card becomes the new root.
+  const pasteAbove = useCallback((targetId: string) => {
+    const target = nodes.find(n => n.id === targetId)
+    if (!target) return
+    const n = nodeFromClipboard(target.parentId, target.edgeKind)
+    if (!n) return
+    setNodes(prev =>
+      prev
+        .map(x => (x.id === targetId ? { ...x, parentId: n.id, edgeKind: 'continue' as EdgeKind } : x))
+        .concat(n)
+    )
+    setActiveNodeId(n.id)
+  }, [nodes, nodeFromClipboard])
+
+  // Edit a card's question, then re-stream its answer for the new question.
+  const submitEditQuestion = useCallback((nodeId: string, newQuestion: string) => {
+    const nextNodes = nodes.map(n =>
+      n.id === nodeId
+        ? {
+            ...n,
+            messages: n.messages.map(m =>
+              m.role === 'user'
+                ? { ...m, content: newQuestion }
+                : m.role === 'assistant'
+                  ? { ...m, content: '' }
+                  : m
+            ),
+          }
+        : n
+    )
+    setNodes(nextNodes)
+    setEditingNodeId(null)
+    setActiveNodeId(nodeId)
+    runLLM(nodeId, buildContext(nodeId, nextNodes))
+  }, [nodes, runLLM, buildContext])
+
   // Branch creation
   const handleSubmit = useCallback((question: string) => {
     if (!pendingInput) return
@@ -672,6 +744,10 @@ export default function App() {
               onBranch={id => setPendingInput({ parentId: id, mode: 'branch' })}
               onContinue={id => setPendingInput({ parentId: id, mode: 'continue' })}
               onDelete={handleDeleteNode}
+              onContextMenu={(id, x, y) => {
+                setActiveNodeId(id)
+                setContextMenu({ nodeId: id, x, y })
+              }}
             />
           ))}
         </div>
@@ -1008,6 +1084,41 @@ export default function App() {
           onCancel={() => setCreatingRoot(false)}
         />
       )}
+
+      {/* Input bar — edit a card's question, then re-stream its answer */}
+      {editingNodeId && (() => {
+        const node = nodes.find(n => n.id === editingNodeId)
+        if (!node) return null
+        return (
+          <InputBar
+            mode="edit"
+            initialValue={nodeQuestion(node)}
+            onSubmit={text => submitEditQuestion(editingNodeId, text)}
+            onCancel={() => setEditingNodeId(null)}
+          />
+        )
+      })()}
+
+      {/* Right-click card action menu (copy / paste / edit / delete) */}
+      {contextMenu && (() => {
+        const node = nodes.find(n => n.id === contextMenu.nodeId)
+        if (!node) return null
+        return (
+          <CardContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            accent={getBranchAccent(depthMap.get(node.id) ?? 0)}
+            canPaste={clipboard !== null}
+            onCopy={() => copyNode(node.id)}
+            onPasteAbove={() => pasteAbove(node.id)}
+            onPasteBelow={() => pasteChild(node.id, 'continue')}
+            onPasteBranch={() => pasteChild(node.id, 'branch')}
+            onEdit={() => setEditingNodeId(node.id)}
+            onDelete={() => handleDeleteNode(node.id)}
+            onClose={() => setContextMenu(null)}
+          />
+        )
+      })()}
 
       {/* Themed confirm dialog before wiping the whole canvas (main-thread yellow) */}
       {confirmClear && (
