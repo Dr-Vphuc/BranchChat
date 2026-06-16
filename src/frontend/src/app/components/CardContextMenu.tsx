@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { Copy, ArrowUp, ArrowDown, GitBranch, Pencil, Trash2, LucideIcon } from 'lucide-react'
 
 interface CardContextMenuProps {
-  /** Cursor position (screen space) where the menu opens. */
+  /** Screen-space anchor for the menu's top-left (the card's right edge, top-aligned). */
   x: number
   y: number
   /** Branch-depth accent of the right-clicked card. */
@@ -78,7 +78,7 @@ export function CardContextMenu({
           boxShadow: '0 12px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03)',
           padding: 4,
           zIndex: 320,
-          animation: 'bc-pop-in 0.12s ease-out',
+          animation: 'bc-menu-in 0.12s ease-out',
           transformOrigin: 'top left',
           fontFamily: "'DM Sans', sans-serif",
         }}

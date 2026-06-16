@@ -20,7 +20,8 @@ interface ChatNodeProps {
   onBranch: (parentId: string) => void
   onContinue: (parentId: string) => void
   onDelete: (id: string) => void
-  /** Right-click → open the card action menu at the cursor (screen coords). */
+  /** Right-click → open the card action menu at the given screen coords (the
+   *  card's right edge, top-aligned). */
   onContextMenu: (id: string, x: number, y: number) => void
 }
 
@@ -77,7 +78,10 @@ export function ChatNode({
       onContextMenu={e => {
         e.preventDefault()
         e.stopPropagation()
-        onContextMenu(node.id, e.clientX, e.clientY)
+        // Anchor the menu just off the card's right edge, top-aligned — independent
+        // of where inside the card the cursor clicked.
+        const rect = e.currentTarget.getBoundingClientRect()
+        onContextMenu(node.id, rect.right + 14, rect.top)
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
