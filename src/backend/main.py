@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,8 @@ from pydantic import BaseModel
 
 from google import genai
 from google.genai import types
+
+import db
 
 # Load GEMINI_API_KEY from src/backend/.env regardless of the working directory.
 load_dotenv(Path(__file__).parent / ".env")
@@ -36,6 +38,9 @@ app.add_middleware(
 )
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+# Create the SQLite file + schema on first run (no-op afterwards).
+db.init_db()
 
 
 class Message(BaseModel):
@@ -90,6 +95,73 @@ def chat(req: ChatRequest) -> StreamingResponse:
             yield _sse({"error": str(exc)})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ── Conversation persistence (SQLite) ─────────────────────────────────────────
+# Single-user for now: every row is scoped to CURRENT_USER. When real accounts
+# land, derive this from the authenticated session — the API already scopes by it.
+CURRENT_USER = "local"
+
+
+class PersistedStateIn(BaseModel):
+    # Permissive on purpose: the conversation tree is stored as an opaque JSON blob
+    # so its shape can evolve frontend-side without backend migrations.
+    version: int
+    conversation: dict
+    viewport: dict
+    activeNodeId: Optional[str] = None
+
+
+class LastActiveIn(BaseModel):
+    id: str
+
+
+@app.get("/api/conversations")
+def list_conversations() -> list:
+    """History index (metadata only), most-recent first."""
+    return db.list_metas(CURRENT_USER)
+
+
+@app.get("/api/conversations/{cid}")
+def read_conversation(cid: str) -> dict:
+    state = db.get_conversation(CURRENT_USER, cid)
+    if state is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return state
+
+
+@app.put("/api/conversations/{cid}")
+def write_conversation(cid: str, state: PersistedStateIn) -> list:
+    """Upsert one conversation; returns the refreshed index."""
+    if state.conversation.get("id") != cid:
+        raise HTTPException(status_code=400, detail="conversation id mismatch")
+    return db.upsert_conversation(CURRENT_USER, state.model_dump())
+
+
+@app.delete("/api/conversations/{cid}")
+def remove_conversation(cid: str) -> list:
+    return db.delete_conversation(CURRENT_USER, cid)
+
+
+@app.get("/api/bootstrap")
+def bootstrap() -> dict:
+    """One round-trip to init the client: history index + the last-active
+    conversation already loaded (falls back to the most-recent one)."""
+    index = db.list_metas(CURRENT_USER)
+    last_active_id = db.get_last_active(CURRENT_USER)
+    active = db.get_conversation(CURRENT_USER, last_active_id) if last_active_id else None
+    if active is None and index:
+        last_active_id = index[0]["id"]
+        active = db.get_conversation(CURRENT_USER, last_active_id)
+    if active is None:
+        last_active_id = None
+    return {"index": index, "lastActiveId": last_active_id, "active": active}
+
+
+@app.put("/api/last-active")
+def write_last_active(body: LastActiveIn) -> dict:
+    db.set_last_active(CURRENT_USER, body.id)
+    return {"ok": True}
 
 
 # Production: serve the built frontend if it was bundled into the image. Mounted

@@ -13,13 +13,11 @@ import { getPathToRoot, getChainToRoot, assembleContext, buildDepthMap, nodeQues
 import { computeLayout } from './lib/layout'
 import {
   PersistedState,
-  loadIndex,
+  bootstrapFromServer,
   loadConversation,
   saveConversation,
   deleteConversation,
-  loadLastActiveId,
   saveLastActiveId,
-  migrateLegacy,
 } from './lib/storage'
 import { streamChat, DEFAULT_MODEL } from './lib/api'
 
@@ -36,29 +34,18 @@ function blankPersisted(): PersistedState {
   }
 }
 
-/** Decide which conversation to open on load: last-active → most-recent → blank. */
-function bootstrap(): { index: ConversationMeta[]; persisted: PersistedState } {
-  migrateLegacy()
-  const index = loadIndex()
-  const lastId = loadLastActiveId()
-  let persisted: PersistedState | null = null
-  if (lastId) persisted = loadConversation(lastId)
-  if (!persisted && index.length > 0) persisted = loadConversation(index[0].id)
-  if (!persisted) persisted = blankPersisted()
-  return { index, persisted }
-}
-
 export default function App() {
-  // Resolve the history index + which conversation to open, once on mount.
-  const [boot] = useState(() => bootstrap())
+  // History + the open conversation load from the server on mount (see the
+  // bootstrap effect below); until then we show a loading screen and keep state
+  // empty. `loading` also gates autosave so it can't clobber server data.
+  const [index, setIndex] = useState<ConversationMeta[]>([])
+  const [currentConversationId, setCurrentConversationId] = useState('')
+  const [loading, setLoading] = useState(true)
 
-  const [index, setIndex] = useState<ConversationMeta[]>(boot.index)
-  const [currentConversationId, setCurrentConversationId] = useState(boot.persisted.conversation.id)
-
-  const [nodes, setNodes] = useState<ConversationNode[]>(boot.persisted.conversation.nodes)
-  const [offset, setOffset] = useState(boot.persisted.viewport.offset)
-  const [scale, setScale] = useState(boot.persisted.viewport.scale)
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(boot.persisted.activeNodeId)
+  const [nodes, setNodes] = useState<ConversationNode[]>([])
+  const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 60, y: 60 })
+  const [scale, setScale] = useState(0.85)
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [pendingDeleteConvId, setPendingDeleteConvId] = useState<string | null>(null)
@@ -77,7 +64,9 @@ export default function App() {
   const currentOffset = useRef(offset)
   currentOffset.current = offset
   // createdAt of the open conversation (its id lives in currentConversationId state).
-  const createdAtRef = useRef(boot.persisted.conversation.createdAt)
+  const createdAtRef = useRef(Date.now())
+  // Flipped true once the server bootstrap finishes — autosave stays off until then.
+  const bootstrappedRef = useRef(false)
   // Mirror the index so the autosave effect can read it without subscribing (which
   // would re-fire the effect on every save and loop).
   const indexRef = useRef(index)
@@ -429,42 +418,72 @@ export default function App() {
     }
   }, [nodes, offset, scale, activeNodeId, currentConversationId])
 
+  // Load history + the last-active conversation from the server once on mount.
+  // Until this resolves we show a loading screen; autosave is gated on it so the
+  // empty initial state can't overwrite stored data.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { index, active } = await bootstrapFromServer()
+        if (cancelled) return
+        setIndex(index)
+        applyPersisted(active ?? blankPersisted())
+      } catch (e) {
+        console.error('bootstrap failed', e)
+        if (!cancelled) applyPersisted(blankPersisted())
+      } finally {
+        if (!cancelled) {
+          bootstrappedRef.current = true
+          setLoading(false)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [applyPersisted])
+
   // Flush the current conversation to storage immediately (before switching away).
-  const persistCurrentNow = useCallback(() => {
-    setIndex(saveConversation(buildPersistedState()))
-    saveLastActiveId(currentConversationId)
+  const persistCurrentNow = useCallback(async () => {
+    try {
+      setIndex(await saveConversation(buildPersistedState()))
+      await saveLastActiveId(currentConversationId)
+    } catch (e) {
+      console.error('persist failed', e)
+    }
   }, [buildPersistedState, currentConversationId])
 
-  const switchConversation = useCallback((id: string) => {
+  const switchConversation = useCallback(async (id: string) => {
     setSidebarOpen(false)
     if (id === currentConversationId) return
-    persistCurrentNow()
-    const target = loadConversation(id)
+    await persistCurrentNow()
+    const target = await loadConversation(id)
     if (!target) return
     applyPersisted(target)
-    saveLastActiveId(id)
+    await saveLastActiveId(id)
   }, [currentConversationId, persistCurrentNow, applyPersisted])
 
-  const newConversation = useCallback(() => {
+  const newConversation = useCallback(async () => {
     setSidebarOpen(false)
     // Already on a blank canvas → nothing to create (avoid stray "Untitled" rows).
     if (nodes.length === 0) return
-    persistCurrentNow()
+    await persistCurrentNow()
     const fresh = blankPersisted()
     applyPersisted(fresh)
-    setIndex(saveConversation(fresh))
-    saveLastActiveId(fresh.conversation.id)
+    setIndex(await saveConversation(fresh))
+    await saveLastActiveId(fresh.conversation.id)
   }, [nodes.length, persistCurrentNow, applyPersisted])
 
-  const deleteConversationFromHistory = useCallback((id: string) => {
-    const nextIndex = deleteConversation(id)
+  const deleteConversationFromHistory = useCallback(async (id: string) => {
+    const nextIndex = await deleteConversation(id)
     setIndex(nextIndex)
     if (id !== currentConversationId) return
     // Deleted the open one → fall back to the most recent remaining, else blank.
-    const fallback = nextIndex.length > 0 ? loadConversation(nextIndex[0].id) : null
+    const fallback = nextIndex.length > 0 ? await loadConversation(nextIndex[0].id) : null
     const target = fallback ?? blankPersisted()
     applyPersisted(target)
-    saveLastActiveId(target.conversation.id)
+    await saveLastActiveId(target.conversation.id)
   }, [currentConversationId, applyPersisted])
 
   // Gather a node + all its descendants via breadth-first walk of parentId links.
@@ -549,19 +568,47 @@ export default function App() {
   // Skip a brand-new untouched blank (not yet in history) so it doesn't clutter the
   // list; but DO persist an existing conversation that was just emptied (Clear).
   useEffect(() => {
-    const handle = window.setTimeout(() => {
+    if (loading || !bootstrappedRef.current) return
+    const handle = window.setTimeout(async () => {
       const known = indexRef.current.some(m => m.id === currentConversationId)
       if (nodes.length === 0 && !known) return
-      setIndex(saveConversation(buildPersistedState()))
-      saveLastActiveId(currentConversationId)
+      try {
+        setIndex(await saveConversation(buildPersistedState()))
+        await saveLastActiveId(currentConversationId)
+      } catch (e) {
+        console.error('autosave failed', e)
+      }
     }, 400)
     return () => window.clearTimeout(handle)
-  }, [nodes, offset, scale, activeNodeId, currentConversationId, buildPersistedState])
+  }, [nodes, offset, scale, activeNodeId, currentConversationId, buildPersistedState, loading])
 
   // Dot grid background follows pan/zoom
   const dotSpacing = 28 * scale
   const dotOffsetX = ((offset.x % dotSpacing) + dotSpacing) % dotSpacing
   const dotOffsetY = ((offset.y % dotSpacing) + dotSpacing) % dotSpacing
+
+  // While the server bootstrap is in flight, show a minimal branded loader.
+  if (loading) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 10,
+          backgroundColor: '#0c0c10',
+          fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
+        <GitBranch size={16} color={ACCENT_MAIN_COLOR} strokeWidth={2} />
+        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.04em' }}>
+          Đang tải…
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div
