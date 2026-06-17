@@ -23,6 +23,9 @@ pnpm-debug.log*
 *.db-shm
 *.db-wal
 
+# Benchmark result cache (re-fetchable; avoids re-spending Gemini quota)
+tests/quality_bench/data/.cache/
+
 # OS / editor
 .DS_Store
 Thumbs.db
