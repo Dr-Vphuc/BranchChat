@@ -1,0 +1,3 @@
+# Optional — the harness runs without it (falls back to a char/4 heuristic).
+# Installing tiktoken gives more credible absolute token counts.
+tiktoken>=0.7
