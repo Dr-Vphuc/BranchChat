@@ -1,0 +1,50 @@
+[
+  {
+    "q": "What's the capital of France, and is it worth visiting?",
+    "a": "The capital of France is Paris. It's one of the most visited cities in the world, famous for the Eiffel Tower, the Louvre, Notre-Dame, and its café culture. Spring and early autumn are usually the most pleasant times to go."
+  },
+  {
+    "q": "Can you recommend a good recipe for banana bread?",
+    "a": "Sure! Mash 3 ripe bananas, mix with 1/3 cup melted butter, 3/4 cup sugar, 1 egg, and 1 tsp vanilla. Stir in 1 tsp baking soda, a pinch of salt, and 1.5 cups flour. Pour into a greased loaf pan and bake at 175°C (350°F) for about 50–60 minutes until a toothpick comes out clean."
+  },
+  {
+    "q": "Why is the sky blue?",
+    "a": "Sunlight contains all colors, but shorter blue wavelengths scatter much more strongly off air molecules than longer red ones (Rayleigh scattering). That scattered blue light reaches your eyes from every direction, so the daytime sky looks blue."
+  },
+  {
+    "q": "Who wrote Romeo and Juliet?",
+    "a": "Romeo and Juliet was written by William Shakespeare, most likely around 1594–1596. It's one of his best-known tragedies, about two young lovers from feuding families in Verona."
+  },
+  {
+    "q": "What are some tips for staying focused while working from home?",
+    "a": "A few that help most people: keep a dedicated workspace, set fixed start and end times, silence non-essential notifications, work in focused blocks (e.g., 25–50 minutes) with short breaks, and step outside at least once during the day to reset."
+  },
+  {
+    "q": "How do I keep a houseplant like a pothos alive?",
+    "a": "Pothos are forgiving. Give them bright, indirect light, let the top 2–3 cm of soil dry out between waterings, and avoid letting them sit in water. They tolerate lower light too, just with slower growth. Wipe the leaves occasionally so they can breathe."
+  },
+  {
+    "q": "What's the difference between weather and climate?",
+    "a": "Weather is the short-term state of the atmosphere — what's happening today or this week, like rain or a heatwave. Climate is the long-term average of weather patterns over decades for a region. In short: weather is your mood, climate is your personality."
+  },
+  {
+    "q": "Recommend a beginner-friendly hobby I can start this weekend.",
+    "a": "Sketching is a great low-cost start: you only need a pencil and paper, and 15 minutes a day builds skill quickly. Other easy starts are journaling, learning a few songs on a ukulele, or simple home gardening with herbs on a windowsill."
+  },
+  {
+    "q": "What's a fun fact about octopuses?",
+    "a": "Octopuses have three hearts and blue, copper-based blood. Two hearts pump blood to the gills and one to the rest of the body — and the body heart actually stops beating when they swim, which is part of why they often prefer crawling."
+  },
+  {
+    "q": "How can I make my morning coffee taste better?",
+    "a": "Use fresh beans ground just before brewing, measure your ratio (around 1:16 coffee to water by weight), and use water just off the boil (about 92–96°C). Even rinsing a paper filter first to remove the papery taste can make a noticeable difference."
+  },
+  {
+    "q": "What should I pack for a weekend hiking trip?",
+    "a": "Essentials: enough water, high-energy snacks, layered clothing, a rain shell, a basic first-aid kit, a map or offline GPS, sunscreen, and a headlamp. Wear broken-in boots and tell someone your route and expected return time."
+  },
+  {
+    "q": "Why do cats purr?",
+    "a": "Cats usually purr when they're content, but they also purr when stressed, injured, or nursing. The vibrations (around 25–150 Hz) may even have a self-soothing or healing role, which is why a cat might purr at the vet as well as on your lap."
+  }
+]

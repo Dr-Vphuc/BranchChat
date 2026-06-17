@@ -1,0 +1,6 @@
+# Same Gemini stack the backend uses. Install with:
+#   pip install -r tests/quality_bench/requirements.txt
+# (--selftest and fetch_data.py run on the stdlib alone; these are only needed
+#  to actually call the model.)
+google-genai
+python-dotenv
