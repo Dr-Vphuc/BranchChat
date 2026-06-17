@@ -142,6 +142,7 @@ def run_bench(args) -> None:
     cache = {} if args.no_cache else _load_cache()
 
     records: List[dict] = []
+    failures = 0
     total = len(problems) * len(ks)
     done = 0
     for p in problems:
@@ -150,23 +151,39 @@ def run_bench(args) -> None:
             done += 1
             key = _cache_key(args.model, args.distractor, k, p.index)
             if key in cache:
-                rec = cache[key]
-            else:
-                messages = build_messages(p.question, distractors[:k])
+                records.append(cache[key])
+                print(f"\r[{done}/{total}] index={p.index} k={k} (cache)   ", end="", file=sys.stderr)
+                continue
+            messages = build_messages(p.question, distractors[:k])
+            try:
                 text, prompt_tokens = generate(SYSTEM, messages, model=args.model)
-                pred = extract_pred(text)
-                rec = {
-                    "key": key, "k": k, "index": p.index,
-                    "pred": pred, "gold": p.gold,
-                    "correct": is_correct(pred, p.gold),
-                    "prompt_tokens": prompt_tokens,
-                }
-                if not args.no_cache:
-                    _append_cache(rec)
-                    cache[key] = rec
+            except Exception as exc:  # noqa: BLE001 — transient (503/quota): skip, resume on rerun
+                failures += 1
+                print(f"\n  ! bỏ qua index={p.index} k={k}: {exc}", file=sys.stderr)
+                continue
+            pred = extract_pred(text)
+            rec = {
+                "key": key, "k": k, "index": p.index,
+                "pred": pred, "gold": p.gold,
+                "correct": is_correct(pred, p.gold),
+                "prompt_tokens": prompt_tokens,
+            }
+            if not args.no_cache:
+                _append_cache(rec)
+                cache[key] = rec
             records.append(rec)
             print(f"\r[{done}/{total}] index={p.index} k={k}      ", end="", file=sys.stderr)
     print("", file=sys.stderr)
+
+    if failures:
+        print(
+            f"\n⚠️  {failures} lượt thất bại (thường do 503/quota tạm thời). "
+            f"Đã giữ {len(records)} kết quả trong cache — chạy lại đúng lệnh để lấp các lượt còn thiếu.",
+            file=sys.stderr,
+        )
+        if not records:
+            print("Chưa có kết quả nào để báo cáo. Hãy chạy lại sau ít phút.", file=sys.stderr)
+            return
 
     rows = _aggregate(records, ks)
     _report(f"CONTEXT POLLUTION (GSM8K, N={len(problems)})", rows, args)

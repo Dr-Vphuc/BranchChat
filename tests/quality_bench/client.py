@@ -56,10 +56,10 @@ def generate(
     system: str,
     messages: List[Message],
     model: str = DEFAULT_MODEL,
-    max_retries: int = 5,
+    max_retries: int = 8,
 ) -> Tuple[str, Optional[int]]:
-    """Return ``(text, prompt_token_count)``. Retries with backoff on errors
-    (rate limits / transient failures)."""
+    """Return ``(text, prompt_token_count)``. Retries with exponential backoff on
+    errors (503 overload / 429 rate limit / transient failures)."""
     from google.genai import types
 
     client = _get_client()
