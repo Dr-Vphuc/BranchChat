@@ -228,6 +228,27 @@ def run_selftest() -> None:
     print("  distractors: nested theo k, không trùng target, mix xen kẽ ✓")
 
 
+def run_report_only(args) -> None:
+    """Tổng hợp & in báo cáo CHỈ từ cache — không gọi API lượt nào."""
+    cache = _load_cache()
+    if not cache:
+        print(f"Cache trống: {CACHE_PATH}. Chưa có kết quả nào để báo cáo.")
+        return
+    prefix = f"{args.model}|{args.distractor}|"
+    recs = [r for r in cache.values() if r["key"].startswith(prefix)]
+    if not recs:
+        print(f"Cache không có dữ liệu cho model={args.model}, distractor={args.distractor}.")
+        print("Các tổ hợp (model | distractor) đang có trong cache:")
+        for combo in sorted({"|".join(r["key"].split("|")[:2]) for r in cache.values()}):
+            print("  -", combo.replace("|", " | "))
+        print("→ Thêm cờ --model / --distractor cho đúng tổ hợp bạn đã chạy.")
+        return
+    ks = sorted({r["k"] for r in recs})
+    rows = _aggregate(recs, ks)
+    print(f"(báo cáo từ cache: {len(recs)} lượt đã tính — không gọi API)")
+    _report(f"CONTEXT POLLUTION — từ cache (distractor={args.distractor})", rows, args)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description="Benchmark chất lượng: context sạch (rẽ nhánh) vs bị nhiễu (tuyến tính).")
     p.add_argument("--n", type=int, default=200, help="Số bài GSM8K (mặc định 200).")
@@ -238,11 +259,15 @@ def main(argv=None) -> None:
     p.add_argument("--json", action="store_true", help="In thêm kết quả JSON.")
     p.add_argument("--csv", metavar="PATH", help="Ghi bảng theo k ra CSV.")
     p.add_argument("--no-cache", action="store_true", help="Không đọc/ghi cache (gọi lại toàn bộ).")
+    p.add_argument("--report-only", action="store_true",
+                   help="Chỉ in báo cáo từ cache đã có, KHÔNG gọi API lượt nào.")
     p.add_argument("--selftest", action="store_true", help="Chạy assert offline rồi thoát (không gọi API).")
     args = p.parse_args(argv)
 
     if args.selftest:
         run_selftest()
+    elif args.report_only:
+        run_report_only(args)
     else:
         run_bench(args)
 
