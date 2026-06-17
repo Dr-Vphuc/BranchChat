@@ -18,6 +18,11 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# SQLite conversation history (local dev runs; prod stores it on a Docker volume)
+*.db
+*.db-shm
+*.db-wal
+
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -14,5 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/backend/ ./
 COPY --from=frontend /app/dist ./static
 ENV STATIC_DIR=/app/static
+# Conversation history DB — lives on a mounted volume (see docker-compose.yml) so
+# it survives image rebuilds. init_db() creates the dir + file on first run.
+ENV DB_PATH=/app/data/branchchat.db
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
